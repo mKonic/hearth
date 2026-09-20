@@ -3,6 +3,7 @@
 #include "platform/vulkan/VulkanCommandList.h"
 #include "platform/vulkan/VulkanResources.h"
 #include "platform/vulkan/VulkanSwapchain.h"
+#include "platform/vulkan/VulkanVersion.h"
 
 #include <VkBootstrap.h>
 
@@ -64,6 +65,18 @@ namespace hearth {
     bool VulkanDevice::InitVulkan(const DeviceDesc& desc) {
         m_Validation = desc.enableValidation;
 
+        const u32 instanceVersion = NegotiateInstanceVersion();
+        if (instanceVersion == 0) return false;   // already reported, with the reason
+
+        const u32 floor = std::max(desc.minimumApiVersion, kMinimumApiVersion);
+        if (instanceVersion < floor) {
+            HEARTH_ERROR("this application asked for Vulkan {}.{} but the loader offers {}.{}",
+                         VK_API_VERSION_MAJOR(floor), VK_API_VERSION_MINOR(floor),
+                         VK_API_VERSION_MAJOR(instanceVersion),
+                         VK_API_VERSION_MINOR(instanceVersion));
+            return false;
+        }
+
         const std::vector<const char*> extra =
             m_Surface ? m_Surface->RequiredInstanceExtensions() : std::vector<const char*>{};
 
@@ -71,7 +84,7 @@ namespace hearth {
             vkb::InstanceBuilder builder;
             builder.set_app_name(desc.appName.c_str())
                    .set_engine_name(desc.engineName.c_str())
-                   .require_api_version(1, 3, 0);
+                   .require_api_version(instanceVersion);
             for (const char* ext : extra) builder.enable_extension(ext);
             if (validation)
                 builder.request_validation_layers(true).set_debug_callback(DebugCallback);
@@ -121,7 +134,7 @@ namespace hearth {
         f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
 
         vkb::PhysicalDeviceSelector selector{ instance };
-        selector.set_minimum_version(1, 3)
+        selector.set_minimum_version(floor)
                 .set_required_features_13(f13)
                 .set_required_features_12(f12);
 
@@ -135,7 +148,20 @@ namespace hearth {
             return false;
         }
 
-        auto built = vkb::DeviceBuilder{ physical.value() }.build();
+        VkPhysicalDeviceProperties selected{};
+        vkGetPhysicalDeviceProperties(physical.value().physical_device, &selected);
+        // The usable version is the lowest of the three parties: loader, headers, device.
+        m_ApiVersion = std::min(instanceVersion, selected.apiVersion);
+
+        OptionalFeatureStorage optionalStorage;
+        std::vector<void*> optionalChain;
+        const OptionalFeatures optional = ChainOptionalFeatures(
+            physical.value().physical_device, m_ApiVersion, optionalStorage, optionalChain);
+
+        vkb::DeviceBuilder deviceBuilder{ physical.value() };
+        for (void* link : optionalChain) deviceBuilder.add_pNext(link);
+
+        auto built = deviceBuilder.build();
         if (!built) {
             HEARTH_ERROR("logical device creation failed: {}", built.error().message());
             return false;
@@ -162,8 +188,10 @@ namespace hearth {
         m_Caps.maxTexturesPerBindGroup =
             std::max(indexing.maxDescriptorSetUpdateAfterBindSampledImages,
                      props.limits.maxPerStageDescriptorSampledImages);
-        m_Caps.driverInfo = std::format("Vulkan {}.{}", VK_API_VERSION_MAJOR(props.apiVersion),
-                                                        VK_API_VERSION_MINOR(props.apiVersion));
+        m_Caps.apiVersion     = m_ApiVersion;
+        m_Caps.hostImageCopy  = optional.hostImageCopy;
+        m_Caps.pushDescriptor = optional.pushDescriptor;
+        m_Caps.driverInfo     = "Vulkan " + DescribeOptional(m_ApiVersion, optional);
 
         HEARTH_INFO("{} ({}){}, {}", m_Caps.deviceName,
                     m_Caps.discrete ? "discrete" : (m_Caps.softwareRasterizer ? "CPU" : "integrated"),
@@ -182,7 +210,7 @@ namespace hearth {
         info.physicalDevice   = m_Physical;
         info.device           = m_Device;
         info.instance         = m_Instance;
-        info.vulkanApiVersion = VK_API_VERSION_1_3;
+        info.vulkanApiVersion = m_ApiVersion;
         info.pVulkanFunctions = &fns;
         HEARTH_VK_CHECK(vmaCreateAllocator(&info, &m_Allocator));
 

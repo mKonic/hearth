@@ -11,6 +11,11 @@ namespace hearth {
     struct DeviceCaps {
         std::string deviceName;
         std::string driverInfo;
+        // The core version actually negotiated: the lowest of what the loader offers, what
+        // hearth's headers describe, and what the device supports. hearth targets the highest
+        // available rather than a version fixed at build time, so a machine that gains a
+        // newer loader gets it without hearth changing.
+        u32 apiVersion = 0;
         bool discrete = false;
         // True under lavapipe/llvmpipe. Worth knowing: it is the difference between "this machine
         // has no GPU driver installed" and "this frame is slow", and a headless CI box is usually
@@ -22,6 +27,16 @@ namespace hearth {
         // hardware or fails to create a pipeline on something smaller.
         u32 maxTexturesPerBindGroup = 0;
         u32 framesInFlight = 2;
+
+        // Core features present beyond hearth's 1.3 floor. Reported so a consumer can branch
+        // on them; hearth does not yet route any of its own work through them.
+        bool hostImageCopy = false;
+        bool pushDescriptor = false;
+
+        // `Caps().AtLeast(1, 4)` reads better at a call site than a packed comparison.
+        bool AtLeast(u32 major, u32 minor) const {
+            return apiVersion >= ((major << 22) | (minor << 12));
+        }
     };
 
     class Swapchain {
@@ -36,7 +51,18 @@ namespace hearth {
         // Null = headless: no swapchain, no presentation. Everything else works, which is what a
         // test that renders one image and reads it back needs, and what a CI box can actually run.
         Surface* surface = nullptr;
+        // Off in a shipped build: the layers cost real frame time and print to a console
+        // nobody is watching. Defaults to on only where NDEBUG is absent.
+#ifdef NDEBUG
+        bool enableValidation = false;
+#else
         bool enableValidation = true;
+#endif
+
+        // Raise hearth's 1.3 floor when YOUR code needs a newer core feature, so the refusal
+        // happens at device creation with a clear message rather than at the first call into
+        // a function the driver does not have. 0 leaves hearth's own floor in place.
+        u32 minimumApiVersion = 0;
         bool vsync = true;
         std::string appName = "hearth";
         std::string engineName = "hearth";

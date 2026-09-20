@@ -125,6 +125,7 @@ namespace hearth {
         // there is no VkSurfaceKHR at all, so even a resize has nothing to rebuild against.
         bool m_SurfaceGone = false;
 
+        u32 m_ApiVersion = 0;
         DeviceCaps m_Caps;
     };
 
