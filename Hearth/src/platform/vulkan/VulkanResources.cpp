@@ -89,7 +89,8 @@ namespace hearth {
         info.samples     = VK_SAMPLE_COUNT_1_BIT;
         info.tiling      = VK_IMAGE_TILING_OPTIMAL;
         info.usage       = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        if (target) {
+        if (desc.usage == TextureUsage::Storage) info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        if (target && desc.usage != TextureUsage::Storage) {
             info.usage |= depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
                                 : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
             // So RenderTarget::ReadPixels can copy the result out. Without it the image is
@@ -114,6 +115,18 @@ namespace hearth {
 
         if (!depth)
             m_Sampler = m_Device.SamplerFor(desc.minFilter, desc.magFilter, desc.addressMode);
+
+        if (desc.usage == TextureUsage::Storage) {
+            // Moved to GENERAL once, here, and left there. A storage image has to be in
+            // GENERAL to be written, and an image that is written by compute and sampled by
+            // graphics cannot be in two layouts at once -- so hearth picks the one that
+            // permits both rather than transitioning around every use.
+            m_Device.ImmediateSubmitRaw([&](VkCommandBuffer cmd) {
+                TransitionImageRaw(cmd, m_Image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                   VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_ASPECT_COLOR_BIT);
+            });
+            m_Layout = VK_IMAGE_LAYOUT_GENERAL;
+        }
 
         SetObjectName(m_Device.Raw(), m_Image, desc.debugName);
         SetObjectName(m_Device.Raw(), m_View, desc.debugName + ".view");
@@ -152,6 +165,11 @@ namespace hearth {
         std::memcpy(staging.Map(), pixels, bytes);
 
         const VkImageLayout from = m_Layout;
+        // Where the image goes back to afterwards: a storage image lives in GENERAL, anything
+        // else is left ready to sample.
+        const VkImageLayout settled = m_Desc.usage == TextureUsage::Storage
+                                    ? VK_IMAGE_LAYOUT_GENERAL
+                                    : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         m_Device.ImmediateSubmitRaw([&](VkCommandBuffer cmd) {
             TransitionImageRaw(cmd, m_Image, from, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                VK_IMAGE_ASPECT_COLOR_BIT);
@@ -163,12 +181,11 @@ namespace hearth {
             vkCmdCopyBufferToImage(cmd, staging.Raw(), m_Image,
                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
-            TransitionImageRaw(cmd, m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            TransitionImageRaw(cmd, m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, settled,
                                VK_IMAGE_ASPECT_COLOR_BIT);
         });
 
-        m_Layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        m_Layout = settled;
     }
 
     // ---------------------------------------------------------------------------- Shader
@@ -190,18 +207,17 @@ namespace hearth {
 
     // ---------------------------------------------------------------------------- Pipeline
 
-    VulkanPipeline::VulkanPipeline(VulkanDevice& device, const PipelineDesc& desc)
-        : m_Device(device), m_Desc(desc) {
-
-        if (!desc.bindings.empty()) {
-            std::vector<VkDescriptorSetLayoutBinding> bindings;
+    void VulkanPipeline::BuildLayout(const std::vector<BindingSlot>& bindings,
+                                     u32 pushConstantSize) {
+        if (!bindings.empty()) {
+            std::vector<VkDescriptorSetLayoutBinding> vkBindings;
             std::vector<VkDescriptorBindingFlags> flags;
-            bindings.reserve(desc.bindings.size());
-            flags.reserve(desc.bindings.size());
+            vkBindings.reserve(bindings.size());
+            flags.reserve(bindings.size());
 
-            for (const auto& b : desc.bindings) {
-                bindings.push_back({ b.binding, ToVk(b.type), b.count,
-                                     ToVkStageFlags(b.stages), nullptr });
+            for (const auto& b : bindings) {
+                vkBindings.push_back({ b.binding, ToVk(b.type), b.count,
+                                       ToVkStageFlags(b.stages), nullptr });
                 // An array binding may be left half-written, so PARTIALLY_BOUND always.
                 // UPDATE_AFTER_BIND -- which is what lets a renderer that discovers a texture
                 // mid-scene rewrite the array without waiting for every frame using it to
@@ -217,15 +233,15 @@ namespace hearth {
                 flags.push_back(bindingFlags);
             }
 
-            VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{
-                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
-            flagsInfo.bindingCount  = static_cast<u32>(flags.size());
-            flagsInfo.pBindingFlags = flags.data();
-
             const bool updateAfterBind =
                 std::any_of(flags.begin(), flags.end(), [](VkDescriptorBindingFlags f) {
                     return (f & VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT) != 0;
                 });
+
+            VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{
+                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
+            flagsInfo.bindingCount  = static_cast<u32>(flags.size());
+            flagsInfo.pBindingFlags = flags.data();
 
             VkDescriptorSetLayoutCreateInfo info{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
             info.pNext        = &flagsInfo;
@@ -233,21 +249,57 @@ namespace hearth {
                               ? VkDescriptorSetLayoutCreateFlags{
                                     VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT }
                               : VkDescriptorSetLayoutCreateFlags{ 0 };
-            info.bindingCount = static_cast<u32>(bindings.size());
-            info.pBindings    = bindings.data();
+            info.bindingCount = static_cast<u32>(vkBindings.size());
+            info.pBindings    = vkBindings.data();
             HEARTH_VK_CHECK(vkCreateDescriptorSetLayout(m_Device.Raw(), &info, nullptr, &m_SetLayout));
         }
 
         VkPushConstantRange push{};
-        push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        push.size       = desc.pushConstantSize;
+        // Every stage, so one range serves both pipeline kinds and a caller never has to say
+        // which stages will read it.
+        push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                        | VK_SHADER_STAGE_COMPUTE_BIT;
+        push.size       = pushConstantSize;
 
         VkPipelineLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
         layout.setLayoutCount = m_SetLayout ? 1u : 0u;
         layout.pSetLayouts    = m_SetLayout ? &m_SetLayout : nullptr;
-        layout.pushConstantRangeCount = desc.pushConstantSize ? 1u : 0u;
-        layout.pPushConstantRanges    = desc.pushConstantSize ? &push : nullptr;
+        layout.pushConstantRangeCount = pushConstantSize ? 1u : 0u;
+        layout.pPushConstantRanges    = pushConstantSize ? &push : nullptr;
         HEARTH_VK_CHECK(vkCreatePipelineLayout(m_Device.Raw(), &layout, nullptr, &m_Layout));
+
+        SetObjectName(m_Device.Raw(), m_Layout, m_DebugName + ".layout");
+    }
+
+    VulkanPipeline::VulkanPipeline(VulkanDevice& device, const ComputePipelineDesc& desc)
+        : m_Device(device), m_Compute(true), m_Bindings(desc.bindings),
+          m_DebugName(desc.debugName), m_PushConstantSize(desc.pushConstantSize) {
+        auto* shader = static_cast<VulkanShader*>(desc.compute.get());
+        HEARTH_ASSERT(shader, "compute pipeline '{}' has no shader", desc.debugName);
+        HEARTH_ASSERT(shader->Stage() == ShaderStage::Compute,
+                      "compute pipeline '{}' was given a {} shader", desc.debugName,
+                      shader->Stage() == ShaderStage::Vertex ? "vertex" : "fragment");
+
+        BuildLayout(desc.bindings, desc.pushConstantSize);
+
+        VkPipelineShaderStageCreateInfo stage{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+        stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+        stage.module = shader->Module();
+        stage.pName  = shader->EntryPoint().c_str();
+
+        VkComputePipelineCreateInfo info{ VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+        info.stage  = stage;
+        info.layout = m_Layout;
+        HEARTH_VK_CHECK(vkCreateComputePipelines(m_Device.Raw(), m_Device.PipelineCache(), 1,
+                                                 &info, nullptr, &m_Pipeline));
+        SetObjectName(m_Device.Raw(), m_Pipeline, desc.debugName);
+    }
+
+    VulkanPipeline::VulkanPipeline(VulkanDevice& device, const PipelineDesc& desc)
+        : m_Device(device), m_Bindings(desc.bindings), m_DebugName(desc.debugName),
+          m_PushConstantSize(desc.pushConstantSize), m_Desc(desc) {
+
+        BuildLayout(desc.bindings, desc.pushConstantSize);
 
         auto* vs = static_cast<VulkanShader*>(desc.vertex.get());
         auto* fs = static_cast<VulkanShader*>(desc.fragment.get());
@@ -346,7 +398,6 @@ namespace hearth {
         HEARTH_VK_CHECK(vkCreateGraphicsPipelines(m_Device.Raw(), m_Device.PipelineCache(), 1,
                                                   &info, nullptr, &m_Pipeline));
         SetObjectName(m_Device.Raw(), m_Pipeline, desc.debugName);
-        SetObjectName(m_Device.Raw(), m_Layout, desc.debugName + ".layout");
     }
 
     VulkanPipeline::~VulkanPipeline() {
@@ -362,12 +413,12 @@ namespace hearth {
         : m_Device(device), m_Pipeline(pipeline) {
         auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline.get());
         HEARTH_ASSERT(vkPipeline->HasBindings(), "pipeline '{}' declares no bindings to bind to",
-                      vkPipeline->Desc().debugName);
+                      vkPipeline->DebugName());
         m_PipelineLayout = vkPipeline->Layout();
 
         m_Allocation = m_Device.AllocateDescriptorSet(vkPipeline->SetLayout());
         m_Set = m_Allocation.set;
-        SetObjectName(m_Device.Raw(), m_Set, vkPipeline->Desc().debugName + ".bindgroup");
+        SetObjectName(m_Device.Raw(), m_Set, vkPipeline->DebugName() + ".bindgroup");
 
         Update(entries);
     }
@@ -378,7 +429,7 @@ namespace hearth {
     }
 
     void VulkanBindGroup::Update(const std::vector<BindGroupEntry>& entries) {
-        const auto& slots = static_cast<VulkanPipeline*>(m_Pipeline.get())->Desc().bindings;
+        const auto& slots = m_Pipeline->Bindings();
 
         // Both info arrays are sized up front and never grown afterwards. The descriptor writes
         // hold raw pointers into them, so a reallocation partway through would leave earlier
@@ -396,7 +447,22 @@ namespace hearth {
             write.dstBinding     = entry.binding;
             write.descriptorType = ToVk(entry.type);
 
-            if (entry.type == BindingType::SampledTexture) {
+            if (entry.type == BindingType::StorageTexture) {
+                HEARTH_ASSERT(entry.textures.size() == 1,
+                              "binding {} is a storage texture and takes exactly one image",
+                              entry.binding);
+                auto* vt = static_cast<VulkanTexture*>(entry.textures.front().get());
+                HEARTH_ASSERT(vt->Desc().usage == TextureUsage::Storage,
+                              "binding {} needs a texture created with TextureUsage::Storage",
+                              entry.binding);
+                auto& infos = imageInfos.emplace_back();
+                // A storage image is accessed in GENERAL, and hearth keeps it there for its
+                // whole life rather than transitioning per use -- one that is both written by
+                // compute and sampled cannot be in two layouts at once.
+                infos.push_back({ VK_NULL_HANDLE, vt->View(), VK_IMAGE_LAYOUT_GENERAL });
+                write.descriptorCount = 1;
+                write.pImageInfo      = infos.data();
+            } else if (entry.type == BindingType::SampledTexture) {
                 HEARTH_ASSERT(!entry.textures.empty(),
                               "binding {} is a sampled texture with nothing bound to it",
                               entry.binding);
@@ -413,8 +479,12 @@ namespace hearth {
                 infos.reserve(declared);
                 for (const auto& texture : entry.textures) {
                     auto* vt = static_cast<VulkanTexture*>(texture.get());
+                    // A storage image stays in GENERAL for its whole life, so sampling one
+                    // has to advertise that layout rather than the usual read-only optimal.
                     infos.push_back({ vt->Sampler(), vt->View(),
-                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+                                      vt->Desc().usage == TextureUsage::Storage
+                                          ? VK_IMAGE_LAYOUT_GENERAL
+                                          : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
                 }
                 // Pad the rest with the first entry. Sampling a descriptor that was never written
                 // is undefined behaviour even in a branch the shader does not take, and a batcher

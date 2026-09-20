@@ -35,6 +35,8 @@ namespace hearth {
         void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) override;
         void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex,
                          i32 vertexOffset, u32 firstInstance) override;
+        void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) override;
+        void MemoryBarrier() override;
 
         VkCommandBuffer Raw() const { return m_Cmd; }
         bool TouchedSwapchain() const { return m_TouchedSwapchain; }

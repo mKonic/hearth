@@ -465,6 +465,7 @@ namespace hearth {
     Ref<Texture> VulkanDevice::CreateTexture(const TextureDesc& d){ return CreateRef<VulkanTexture>(*this, d); }
     Ref<Shader>  VulkanDevice::CreateShader(const ShaderDesc& d)  { return CreateRef<VulkanShader>(*this, d); }
     Ref<Pipeline> VulkanDevice::CreatePipeline(const PipelineDesc& d) { return CreateRef<VulkanPipeline>(*this, d); }
+    Ref<Pipeline> VulkanDevice::CreateComputePipeline(const ComputePipelineDesc& d) { return CreateRef<VulkanPipeline>(*this, d); }
 
     Ref<BindGroup> VulkanDevice::CreateBindGroup(const Ref<Pipeline>& p,
                                                  const std::vector<BindGroupEntry>& e) {

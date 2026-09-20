@@ -80,9 +80,27 @@ namespace hearth {
         std::string debugName;
     };
 
+    // A compute pipeline is one shader and its bindings. It shares Pipeline with the
+    // graphics kind because everything downstream -- bind groups, push constants, the
+    // descriptor pool -- treats them identically; only the bind point and the dispatch
+    // differ, and CommandList works that out from IsCompute().
+    struct ComputePipelineDesc {
+        Ref<Shader> compute;
+        std::vector<BindingSlot> bindings;
+        u32 pushConstantSize = 0;
+        std::string debugName;
+    };
+
     class Pipeline {
     public:
         virtual ~Pipeline() = default;
+
+        virtual bool IsCompute() const = 0;
+        virtual const std::vector<BindingSlot>& Bindings() const = 0;
+        virtual const std::string& DebugName() const = 0;
+
+        // Graphics only. Asserts on a compute pipeline, which has no vertex layout, no blend
+        // state and no attachment formats to report.
         virtual const PipelineDesc& Desc() const = 0;
     };
 
@@ -92,6 +110,8 @@ namespace hearth {
         BindingType type = BindingType::UniformBuffer;
         Ref<Buffer> buffer;
         u64 bufferOffset = 0, bufferRange = 0;     // range 0 = the whole buffer
+        // StorageTexture binds exactly one, and it must have been created with
+        // TextureUsage::Storage.
         // More than one for an array binding. A slot declared with count N that receives fewer
         // than N textures has the remainder filled with the first entry, so a partially populated
         // sampler array still validates -- reading an unwritten descriptor is undefined behaviour

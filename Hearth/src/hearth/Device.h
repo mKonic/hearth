@@ -106,6 +106,7 @@ namespace hearth {
         Ref<Texture> CreateSolidTexture(u32 rgba);
         virtual Ref<Shader>       CreateShader(const ShaderDesc&) = 0;
         virtual Ref<Pipeline>     CreatePipeline(const PipelineDesc&) = 0;
+        virtual Ref<Pipeline>     CreateComputePipeline(const ComputePipelineDesc&) = 0;
         virtual Ref<BindGroup>    CreateBindGroup(const Ref<Pipeline>&,
                                                   const std::vector<BindGroupEntry>&) = 0;
         virtual Ref<RenderTarget> CreateRenderTarget(const RenderTargetDesc&) = 0;

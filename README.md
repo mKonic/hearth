@@ -98,6 +98,40 @@ target->ReadPixels(pixels.data(), pixels.size());
 RGBA target and no channel swizzling is needed. Calling `SubmitImmediate` while a frame is
 open aborts — it blocks on the GPU, which would stall the frame being recorded.
 
+## Compute
+
+`CreateComputePipeline` takes one shader and its bindings. Binding it switches the bind point
+automatically, so `BindBindGroup` and `SetPushConstants` are the same calls as for graphics.
+
+```cpp
+auto pipeline = device->CreateComputePipeline({
+    .compute = shader,
+    .bindings = { { .binding = 0, .type = hearth::BindingType::StorageBuffer,
+                    .stages = hearth::StageBit(hearth::ShaderStage::Compute) } },
+    .pushConstantSize = sizeof(Push),
+});
+
+device->SubmitImmediate([&](hearth::CommandList& cmd) {
+    cmd.BindPipeline(pipeline);
+    cmd.BindBindGroup(group);
+    cmd.SetPushConstants(&push, sizeof(push));
+    cmd.Dispatch((count + 63) / 64);     // workgroups, not invocations
+    cmd.MemoryBarrier();
+});
+```
+
+`Dispatch` counts **workgroups**: a shader with `local_size_x = 64` over 1000 items dispatches
+16 groups, and the shader itself has to discard the tail. It must not be inside a render pass.
+
+`MemoryBarrier` makes everything written before it visible to everything after — between a
+dispatch and the draw that reads its output, this is the call. It is deliberately conservative;
+`hearth/vulkan/Native.h` is there for anyone who has measured it and wants exact stage masks.
+
+A texture bound as `BindingType::StorageTexture` must be created with `TextureUsage::Storage`.
+Those live in `VK_IMAGE_LAYOUT_GENERAL` for their whole life rather than being transitioned per
+use, because an image written by compute and sampled by graphics cannot be in two layouts at
+once.
+
 ## Threads
 
 Resource creation — `CreateBuffer`, `CreateTexture`, `CreateShader`, `CreatePipeline`,

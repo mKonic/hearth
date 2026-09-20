@@ -140,14 +140,19 @@ namespace hearth {
     void VulkanCommandList::BindPipeline(const Ref<Pipeline>& pipeline) {
         HEARTH_ASSERT(pipeline, "BindPipeline with a null pipeline");
         m_BoundPipeline = static_cast<VulkanPipeline*>(pipeline.get());
-        vkCmdBindPipeline(m_Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_BoundPipeline->Raw());
+        HEARTH_ASSERT(!(m_BoundPipeline->IsCompute() && m_InPass),
+                      "compute pipeline '{}' bound inside a render pass",
+                      m_BoundPipeline->DebugName());
+        vkCmdBindPipeline(m_Cmd, m_BoundPipeline->BindPoint(), m_BoundPipeline->Raw());
     }
 
     void VulkanCommandList::BindBindGroup(const Ref<BindGroup>& group) {
         HEARTH_ASSERT(group, "BindBindGroup with a null group");
+        HEARTH_ASSERT(m_BoundPipeline, "BindBindGroup before a pipeline is bound: the bind "
+                                       "point comes from the pipeline");
         auto* g = static_cast<VulkanBindGroup*>(group.get());
         VkDescriptorSet set = g->Raw();
-        vkCmdBindDescriptorSets(m_Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->Layout(),
+        vkCmdBindDescriptorSets(m_Cmd, m_BoundPipeline->BindPoint(), g->Layout(),
                                 0, 1, &set, 0, nullptr);
     }
 
@@ -177,10 +182,11 @@ namespace hearth {
         HEARTH_ASSERT(m_BoundPipeline, "push constants before a pipeline is bound");
         HEARTH_ASSERT(size <= m_BoundPipeline->PushConstantSize(),
                       "{} bytes of push constants into pipeline '{}', which reserved {}",
-                      size, m_BoundPipeline->Desc().debugName,
+                      size, m_BoundPipeline->DebugName(),
                       m_BoundPipeline->PushConstantSize());
         vkCmdPushConstants(m_Cmd, m_BoundPipeline->Layout(),
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                               | VK_SHADER_STAGE_COMPUTE_BIT,
                            0, size, data);
     }
 
@@ -194,6 +200,36 @@ namespace hearth {
                                         i32 vertexOffset, u32 firstInstance) {
         HEARTH_ASSERT(m_BoundPipeline, "DrawIndexed before a pipeline is bound");
         vkCmdDrawIndexed(m_Cmd, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+    }
+
+    void VulkanCommandList::Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) {
+        HEARTH_ASSERT(m_BoundPipeline, "Dispatch before a pipeline is bound");
+        HEARTH_ASSERT(m_BoundPipeline->IsCompute(),
+                      "Dispatch with the graphics pipeline '{}' bound",
+                      m_BoundPipeline->DebugName());
+        HEARTH_ASSERT(!m_InPass, "Dispatch inside a render pass");
+        HEARTH_ASSERT(groupsX > 0 && groupsY > 0 && groupsZ > 0,
+                      "Dispatch({}, {}, {}) does nothing -- a zero group count is almost "
+                      "always a division that rounded down", groupsX, groupsY, groupsZ);
+        vkCmdDispatch(m_Cmd, groupsX, groupsY, groupsZ);
+    }
+
+    // ALL_COMMANDS both sides, every access bit. A caller reaching for this is pairing a
+    // compute dispatch with the draw that reads its output, and the cost of one over-wide
+    // barrier is a pipeline bubble -- the cost of a too-narrow one is a result that is right
+    // on the machine it was written on. hearth/vulkan/Native.h is there for anyone who has
+    // measured this and wants the precise masks.
+    void VulkanCommandList::MemoryBarrier() {
+        VkMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        barrier.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+
+        VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers    = &barrier;
+        vkCmdPipelineBarrier2(m_Cmd, &dep);
     }
 
 }

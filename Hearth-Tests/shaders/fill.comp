@@ -1,0 +1,21 @@
+#version 450
+
+// Writes index*multiplier into a storage buffer. Deliberately arithmetic a CPU check can
+// reproduce exactly, so a wrong result is a wrong number rather than a wrong-looking image.
+
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0) buffer Output {
+   uint values[];
+} outBuffer;
+
+layout(push_constant) uniform Push {
+   uint count;
+   uint multiplier;
+} push;
+
+void main() {
+   const uint index = gl_GlobalInvocationID.x;
+   if (index >= push.count) return;    // the tail of the last workgroup
+   outBuffer.values[index] = index * push.multiplier;
+}

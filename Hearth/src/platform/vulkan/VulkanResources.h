@@ -81,17 +81,38 @@ namespace hearth {
     class VulkanPipeline final : public Pipeline {
     public:
         VulkanPipeline(VulkanDevice& device, const PipelineDesc& desc);
+        VulkanPipeline(VulkanDevice& device, const ComputePipelineDesc& desc);
         ~VulkanPipeline() override;
 
-        const PipelineDesc& Desc() const override { return m_Desc; }
+        bool IsCompute() const override { return m_Compute; }
+        const std::vector<BindingSlot>& Bindings() const override { return m_Bindings; }
+        const std::string& DebugName() const override { return m_DebugName; }
+
+        const PipelineDesc& Desc() const override {
+            HEARTH_ASSERT(!m_Compute, "Desc() on the compute pipeline '{}': it has no vertex "
+                                      "layout, blend state or attachment formats", m_DebugName);
+            return m_Desc;
+        }
+
         VkPipeline            Raw() const { return m_Pipeline; }
+        VkPipelineBindPoint   BindPoint() const {
+            return m_Compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+        }
         VkPipelineLayout      Layout() const { return m_Layout; }
         VkDescriptorSetLayout SetLayout() const { return m_SetLayout; }
         bool HasBindings() const { return m_SetLayout != VK_NULL_HANDLE; }
-        u32  PushConstantSize() const { return m_Desc.pushConstantSize; }
+        u32  PushConstantSize() const { return m_PushConstantSize; }
 
     private:
+        // Both constructors funnel into this: the descriptor set layout, the pipeline layout
+        // and the push-constant range are identical for graphics and compute.
+        void BuildLayout(const std::vector<BindingSlot>& bindings, u32 pushConstantSize);
+
         VulkanDevice&         m_Device;
+        bool                  m_Compute = false;
+        std::vector<BindingSlot> m_Bindings;
+        std::string           m_DebugName;
+        u32                   m_PushConstantSize = 0;
         PipelineDesc          m_Desc;
         VkPipeline            m_Pipeline = VK_NULL_HANDLE;
         VkPipelineLayout      m_Layout = VK_NULL_HANDLE;

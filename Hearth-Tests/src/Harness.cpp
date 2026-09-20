@@ -72,6 +72,11 @@ namespace hearth::tests {
 int main() {
     using namespace hearth::tests;
 
+    // Line-buffered even when redirected to a file. A driver crash mid-suite takes the
+    // process down without flushing, and block buffering would then throw away every line
+    // printed before it -- leaving a CI log that says nothing about where it died.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+
     // A validation error is a test failure, not a log line nobody reads.
     hearth::SetLogSink([](hearth::LogLevel level, std::string_view message, void*) {
         if (level == hearth::LogLevel::Error) {
@@ -85,6 +90,7 @@ int main() {
     RunDeviceTests();
     RunResourceTests();
     RunRenderTests();
+    RunComputeTests();
     RunSystemTests();
 
     // A green run means much less without the validation layers: most of what this suite is

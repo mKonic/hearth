@@ -27,6 +27,7 @@ namespace hearth {
         Ref<Texture>      CreateTexture(const TextureDesc&) override;
         Ref<Shader>       CreateShader(const ShaderDesc&) override;
         Ref<Pipeline>     CreatePipeline(const PipelineDesc&) override;
+        Ref<Pipeline>     CreateComputePipeline(const ComputePipelineDesc&) override;
         Ref<BindGroup>    CreateBindGroup(const Ref<Pipeline>&,
                                           const std::vector<BindGroupEntry>&) override;
         Ref<RenderTarget> CreateRenderTarget(const RenderTargetDesc&) override;

@@ -34,7 +34,10 @@ namespace hearth {
     // uniforms) and stays mapped; DeviceLocal is uploaded once through a staging copy.
     enum class MemoryKind : u8 { DeviceLocal, HostVisible };
 
-    enum class TextureUsage : u8 { Sampled, RenderTarget, DepthTarget };
+    // Storage is a texture a compute shader writes into. It differs from the others in that
+    // it lives in VK_IMAGE_LAYOUT_GENERAL rather than being transitioned per use -- a storage
+    // image that is also sampled cannot be in two layouts at once.
+    enum class TextureUsage : u8 { Sampled, RenderTarget, DepthTarget, Storage };
 
     enum class Filter : u8 { Nearest, Linear };
     enum class AddressMode : u8 { ClampToEdge, Repeat, MirroredRepeat, ClampToBorder };
@@ -51,7 +54,7 @@ namespace hearth {
 
     enum class LoadOp : u8 { Load, Clear, DontCare };
 
-    enum class BindingType : u8 { UniformBuffer, StorageBuffer, SampledTexture };
+    enum class BindingType : u8 { UniformBuffer, StorageBuffer, SampledTexture, StorageTexture };
 
     enum class IndexType : u8 { U16, U32 };
 

@@ -120,6 +120,7 @@ namespace hearth {
             case BindingType::UniformBuffer:  return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             case BindingType::StorageBuffer:  return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             case BindingType::SampledTexture: return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            case BindingType::StorageTexture:  return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         }
         return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     }
