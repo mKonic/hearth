@@ -1,0 +1,10 @@
+bin/
+bin-int/
+*.make
+Makefile
+.vs/
+.vscode/
+compile_commands.json
+PLAN.md
+CHANGELOG.md
+design/
