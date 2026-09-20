@@ -40,6 +40,10 @@ namespace hearth {
     enum class TextureUsage : u8 { Sampled, RenderTarget, DepthTarget, Storage };
 
     enum class Filter : u8 { Nearest, Linear };
+
+    // What a texture is, beyond its size. A cube needs exactly six layers, in the Vulkan face
+    // order: +X, -X, +Y, -Y, +Z, -Z.
+    enum class TextureKind : u8 { Texture2D, Texture2DArray, Cube };
     enum class AddressMode : u8 { ClampToEdge, Repeat, MirroredRepeat, ClampToBorder };
 
     enum class ShaderStage : u8 { Vertex, Fragment, Compute };

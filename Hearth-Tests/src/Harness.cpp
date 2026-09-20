@@ -48,7 +48,7 @@ namespace hearth::tests {
         desc.height = height;
         // RGBA, so a readback needs no channel swizzling and an assertion reads in the same
         // order the colour was written.
-        desc.colorFormat = Format::RGBA8_UNORM;
+        desc.colorFormats = { Format::RGBA8_UNORM };
         desc.debugName   = "test-target";
         auto target = Gpu().CreateRenderTarget(desc);
 
@@ -90,6 +90,7 @@ int main() {
     RunDeviceTests();
     RunResourceTests();
     RunRenderTests();
+    RunFeatureTests();
     RunComputeTests();
     RunSystemTests();
 

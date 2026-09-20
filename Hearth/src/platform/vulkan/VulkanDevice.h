@@ -74,7 +74,8 @@ namespace hearth {
         // four hundred glyph pages that all sample the same way would otherwise burn four hundred
         // sampler objects against maxSamplerAllocationCount, which on some drivers is 4000 and is
         // a limit nobody thinks about until a font atlas trips it.
-        VkSampler SamplerFor(Filter minFilter, Filter magFilter, AddressMode address);
+        VkSampler SamplerFor(Filter minFilter, Filter magFilter, AddressMode address,
+                             u32 mipLevels, f32 maxAnisotropy);
 
     private:
         bool InitVulkan(const DeviceDesc&);

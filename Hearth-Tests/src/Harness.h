@@ -33,5 +33,6 @@ namespace hearth::tests {
     void RunRenderTests();
     void RunSystemTests();
     void RunComputeTests();
+    void RunFeatureTests();
 
 }

@@ -75,20 +75,52 @@ namespace hearth {
 
     // ---------------------------------------------------------------------------- Texture
 
+    namespace {
+
+        u32 FullMipChain(u32 width, u32 height) {
+            u32 levels = 1;
+            while (width > 1 || height > 1) {
+                width  = width  > 1 ? width  / 2 : 1;
+                height = height > 1 ? height / 2 : 1;
+                ++levels;
+            }
+            return levels;
+        }
+
+        u32 LayerCount(const TextureDesc& desc) {
+            if (desc.kind == TextureKind::Cube) return 6;
+            return desc.layers > 0 ? desc.layers : 1;
+        }
+
+    }
+
     VulkanTexture::VulkanTexture(VulkanDevice& device, const TextureDesc& desc)
         : m_Device(device), m_Desc(desc) {
         const bool depth  = IsDepthFormat(desc.format);
         const bool target = desc.usage != TextureUsage::Sampled;
+        const u32  layers = LayerCount(desc);
+
+        HEARTH_ASSERT(desc.kind != TextureKind::Cube || desc.layers == 6 || desc.layers == 1,
+                      "cube texture '{}' declares {} layers; a cube has exactly 6",
+                      desc.debugName, desc.layers);
+
+        // A mip chain is built by blitting each level from the one above, so an image that
+        // cannot be a transfer source cannot have one.
+        m_MipLevels = (desc.generateMipmaps && !depth && desc.usage != TextureUsage::Storage)
+                    ? FullMipChain(desc.width, desc.height)
+                    : 1;
 
         VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         info.imageType   = VK_IMAGE_TYPE_2D;
         info.format      = ToVk(desc.format);
         info.extent      = { desc.width, desc.height, 1 };
-        info.mipLevels   = 1;
-        info.arrayLayers = 1;
+        info.mipLevels   = m_MipLevels;
+        info.arrayLayers = layers;
         info.samples     = VK_SAMPLE_COUNT_1_BIT;
         info.tiling      = VK_IMAGE_TILING_OPTIMAL;
         info.usage       = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (m_MipLevels > 1) info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        if (desc.kind == TextureKind::Cube) info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         if (desc.usage == TextureUsage::Storage) info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
         if (target && desc.usage != TextureUsage::Storage) {
             info.usage |= depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
@@ -106,15 +138,18 @@ namespace hearth {
 
         VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
         view.image    = m_Image;
-        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.viewType = desc.kind == TextureKind::Cube        ? VK_IMAGE_VIEW_TYPE_CUBE
+                      : desc.kind == TextureKind::Texture2DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
+                                                                 : VK_IMAGE_VIEW_TYPE_2D;
         view.format   = info.format;
         view.subresourceRange = { static_cast<VkImageAspectFlags>(
                                       depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT),
-                                  0, 1, 0, 1 };
+                                  0, m_MipLevels, 0, layers };
         HEARTH_VK_CHECK(vkCreateImageView(m_Device.Raw(), &view, nullptr, &m_View));
 
         if (!depth)
-            m_Sampler = m_Device.SamplerFor(desc.minFilter, desc.magFilter, desc.addressMode);
+            m_Sampler = m_Device.SamplerFor(desc.minFilter, desc.magFilter, desc.addressMode,
+                                            m_MipLevels, desc.maxAnisotropy);
 
         if (desc.usage == TextureUsage::Storage) {
             // Moved to GENERAL once, here, and left there. A storage image has to be in
@@ -136,7 +171,8 @@ namespace hearth {
                                  VkImage image, VkImageView view)
         : m_Device(device), m_Desc(desc), m_Image(image), m_View(view), m_Owned(false) {
         if (!IsDepthFormat(desc.format))
-            m_Sampler = m_Device.SamplerFor(desc.minFilter, desc.magFilter, desc.addressMode);
+            m_Sampler = m_Device.SamplerFor(desc.minFilter, desc.magFilter, desc.addressMode,
+                                            1, desc.maxAnisotropy);
     }
 
     VulkanTexture::~VulkanTexture() {
@@ -151,10 +187,25 @@ namespace hearth {
         HEARTH_ASSERT(size >= expected,
                       "upload of {} bytes is short of the {} bytes {}x{} {} needs",
                       size, expected, m_Desc.width, m_Desc.height, FormatName(m_Desc.format));
-        UploadRegion(pixels, 0, 0, m_Desc.width, m_Desc.height);
+        UploadInto(pixels, 0, 0, m_Desc.width, m_Desc.height, 0);
+    }
+
+    void VulkanTexture::UploadLayer(const void* pixels, u64 size, u32 layer) {
+        const u32 layers = LayerCount(m_Desc);
+        HEARTH_ASSERT(layer < layers, "layer {} of '{}', which has {}", layer,
+                      m_Desc.debugName, layers);
+        const u64 expected = u64(m_Desc.width) * m_Desc.height * FormatSize(m_Desc.format);
+        HEARTH_ASSERT(size >= expected,
+                      "layer upload of {} bytes is short of the {} bytes a layer needs",
+                      size, expected);
+        UploadInto(pixels, 0, 0, m_Desc.width, m_Desc.height, layer);
     }
 
     void VulkanTexture::UploadRegion(const void* pixels, u32 x, u32 y, u32 w, u32 h) {
+        UploadInto(pixels, x, y, w, h, 0);
+    }
+
+    void VulkanTexture::UploadInto(const void* pixels, u32 x, u32 y, u32 w, u32 h, u32 layer) {
         HEARTH_ASSERT(x + w <= m_Desc.width && y + h <= m_Desc.height,
                       "region {}x{} at ({},{}) falls outside the {}x{} texture '{}'",
                       w, h, x, y, m_Desc.width, m_Desc.height, m_Desc.debugName);
@@ -175,17 +226,85 @@ namespace hearth {
                                VK_IMAGE_ASPECT_COLOR_BIT);
 
             VkBufferImageCopy copy{};
-            copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1 };
             copy.imageOffset = { static_cast<i32>(x), static_cast<i32>(y), 0 };
             copy.imageExtent = { w, h, 1 };
             vkCmdCopyBufferToImage(cmd, staging.Raw(), m_Image,
                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
-            TransitionImageRaw(cmd, m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, settled,
-                               VK_IMAGE_ASPECT_COLOR_BIT);
+            if (m_MipLevels > 1) {
+                GenerateMips(cmd, layer);   // leaves every level in TRANSFER_SRC
+                TransitionImageRaw(cmd, m_Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, settled,
+                                   VK_IMAGE_ASPECT_COLOR_BIT);
+            } else {
+                TransitionImageRaw(cmd, m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, settled,
+                                   VK_IMAGE_ASPECT_COLOR_BIT);
+            }
         });
 
         m_Layout = settled;
+    }
+
+    // Successive halving: each level is a linear blit of the one above it. Done on the GPU
+    // rather than on the CPU because the pixels are already there, and done per layer because
+    // an array's layers are uploaded independently.
+    //
+    // The barriers are per level rather than one for the whole image: level N is the source
+    // for level N+1, so it must have finished being written before the next blit reads it.
+    void VulkanTexture::GenerateMips(VkCommandBuffer cmd, u32 layer) {
+        auto barrier = [&](u32 level, VkImageLayout from, VkImageLayout to) {
+            VkImageMemoryBarrier2 b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            b.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+            b.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+            b.oldLayout = from;
+            b.newLayout = to;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = m_Image;
+            b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, level, 1, layer, 1 };
+            VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &dep);
+        };
+
+        i32 width  = static_cast<i32>(m_Desc.width);
+        i32 height = static_cast<i32>(m_Desc.height);
+
+        for (u32 level = 1; level < m_MipLevels; ++level) {
+            // The level we are about to read from becomes a transfer source.
+            barrier(level - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+            const i32 nextWidth  = width  > 1 ? width  / 2 : 1;
+            const i32 nextHeight = height > 1 ? height / 2 : 1;
+
+            VkImageBlit2 blit{ VK_STRUCTURE_TYPE_IMAGE_BLIT_2 };
+            blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level - 1, layer, 1 };
+            blit.srcOffsets[1]  = { width, height, 1 };
+            blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, layer, 1 };
+            blit.dstOffsets[1]  = { nextWidth, nextHeight, 1 };
+
+            VkBlitImageInfo2 info{ VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2 };
+            info.srcImage       = m_Image;
+            info.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            info.dstImage       = m_Image;
+            info.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            info.regionCount    = 1;
+            info.pRegions       = &blit;
+            info.filter         = VK_FILTER_LINEAR;
+            vkCmdBlitImage2(cmd, &info);
+
+            width  = nextWidth;
+            height = nextHeight;
+        }
+
+        // The last level was only ever written, so it is still TRANSFER_DST while every
+        // other level is already TRANSFER_SRC. Level them up so one barrier can move the
+        // whole image to its settled layout.
+        barrier(m_MipLevels - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     }
 
     // ---------------------------------------------------------------------------- Shader
@@ -353,7 +472,8 @@ namespace hearth {
 
         VkPipelineMultisampleStateCreateInfo multisample{
             VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisample.rasterizationSamples =
+            static_cast<VkSampleCountFlagBits>(desc.samples ? desc.samples : 1);
 
         VkPipelineDepthStencilStateCreateInfo depth{
             VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
@@ -361,11 +481,15 @@ namespace hearth {
         depth.depthWriteEnable = desc.depthWrite ? VK_TRUE : VK_FALSE;
         depth.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
 
-        const VkPipelineColorBlendAttachmentState blend = BlendState(desc.blend);
+        // One blend state, replicated across every attachment: a pipeline writing several
+        // targets blends them the same way, and per-attachment blending is a knob nothing
+        // here has needed.
+        const std::vector<VkPipelineColorBlendAttachmentState> blends(
+            std::max<size_t>(desc.colorFormats.size(), 1), BlendState(desc.blend));
         VkPipelineColorBlendStateCreateInfo blendState{
             VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-        blendState.attachmentCount = 1;
-        blendState.pAttachments    = &blend;
+        blendState.attachmentCount = static_cast<u32>(blends.size());
+        blendState.pAttachments    = blends.data();
 
         const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
         VkPipelineDynamicStateCreateInfo dynamic{
@@ -376,10 +500,14 @@ namespace hearth {
         // Dynamic rendering: no VkRenderPass, no VkFramebuffer. The attachment formats declared
         // here must match the target this is used against, or validation fires at draw time
         // rather than here, where the mismatch would be obvious.
-        const VkFormat colorFormat = ToVk(desc.colorFormat);
+        std::vector<VkFormat> colorFormats;
+        colorFormats.reserve(std::max<size_t>(desc.colorFormats.size(), 1));
+        for (Format format : desc.colorFormats) colorFormats.push_back(ToVk(format));
+        if (colorFormats.empty()) colorFormats.push_back(VK_FORMAT_B8G8R8A8_UNORM);
+
         VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-        rendering.colorAttachmentCount    = 1;
-        rendering.pColorAttachmentFormats = &colorFormat;
+        rendering.colorAttachmentCount    = static_cast<u32>(colorFormats.size());
+        rendering.pColorAttachmentFormats = colorFormats.data();
         rendering.depthAttachmentFormat   = ToVk(desc.depthFormat);
 
         VkGraphicsPipelineCreateInfo info{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
@@ -513,18 +641,73 @@ namespace hearth {
     // ---------------------------------------------------------------------------- RenderTarget
 
     VulkanRenderTarget::VulkanRenderTarget(VulkanDevice& device, const RenderTargetDesc& desc)
-        : m_Device(device), m_Desc(desc) { Build(); }
+        : m_Device(device), m_Desc(desc) {
+        if (m_Desc.colorFormats.empty()) m_Desc.colorFormats = { Format::RGBA8_UNORM };
+
+        HEARTH_ASSERT(m_Desc.colorFormats.size() <= device.Caps().maxColorAttachments,
+                      "render target '{}' asks for {} colour attachments; this device allows {}",
+                      m_Desc.debugName, m_Desc.colorFormats.size(),
+                      device.Caps().maxColorAttachments);
+
+        // Clamped rather than refused: a target asking for 8x on hardware that does 4x should
+        // render at 4x, not fail to exist.
+        const u32 requested = m_Desc.samples ? m_Desc.samples : 1;
+        m_Desc.samples = std::min(requested, device.Caps().maxSamples);
+        if (m_Desc.samples != requested)
+            HEARTH_WARN("render target '{}' asked for {}x MSAA; this device offers {}x",
+                        m_Desc.debugName, requested, m_Desc.samples);
+        m_Samples = static_cast<VkSampleCountFlagBits>(m_Desc.samples);
+
+        Build();
+    }
 
     VulkanRenderTarget::~VulkanRenderTarget() { Destroy(); }
 
     void VulkanRenderTarget::Build() {
-        TextureDesc color{};
-        color.width     = m_Desc.width;
-        color.height    = m_Desc.height;
-        color.format    = m_Desc.colorFormat;
-        color.usage     = TextureUsage::RenderTarget;
-        color.debugName = m_Desc.debugName;
-        m_Color = CreateRef<VulkanTexture>(m_Device, color);
+        m_Color.resize(m_Desc.colorFormats.size());
+
+        for (size_t i = 0; i < m_Color.size(); ++i) {
+            Attachment& attachment = m_Color[i];
+
+            TextureDesc color{};
+            color.width     = m_Desc.width;
+            color.height    = m_Desc.height;
+            color.format    = m_Desc.colorFormats[i];
+            color.usage     = TextureUsage::RenderTarget;
+            color.debugName = m_Desc.debugName + "[" + std::to_string(i) + "]";
+            attachment.resolve = CreateRef<VulkanTexture>(m_Device, color);
+
+            if (m_Samples == VK_SAMPLE_COUNT_1_BIT) continue;
+
+            // The multisampled image is never sampled and never read back -- it exists only
+            // to be resolved into the one above. TRANSIENT lets a tiler keep it in on-chip
+            // memory and never write it out at all.
+            VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+            info.imageType   = VK_IMAGE_TYPE_2D;
+            info.format      = ToVk(m_Desc.colorFormats[i]);
+            info.extent      = { m_Desc.width, m_Desc.height, 1 };
+            info.mipLevels   = 1;
+            info.arrayLayers = 1;
+            info.samples     = m_Samples;
+            info.tiling      = VK_IMAGE_TILING_OPTIMAL;
+            info.usage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                             | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+
+            VmaAllocationCreateInfo alloc{};
+            alloc.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+            HEARTH_VK_CHECK(vmaCreateImage(m_Device.Allocator(), &info, &alloc,
+                                           &attachment.msaaImage, &attachment.msaaAllocation,
+                                           nullptr));
+
+            VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            view.image    = attachment.msaaImage;
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.format   = info.format;
+            view.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            HEARTH_VK_CHECK(vkCreateImageView(m_Device.Raw(), &view, nullptr,
+                                              &attachment.msaaView));
+            SetObjectName(m_Device.Raw(), attachment.msaaImage, color.debugName + ".msaa");
+        }
 
         if (m_Desc.depthFormat == Format::Undefined) return;
 
@@ -534,7 +717,7 @@ namespace hearth {
         info.extent      = { m_Desc.width, m_Desc.height, 1 };
         info.mipLevels   = 1;
         info.arrayLayers = 1;
-        info.samples     = VK_SAMPLE_COUNT_1_BIT;
+        info.samples     = m_Samples;      // depth must match the colour sample count
         info.tiling      = VK_IMAGE_TILING_OPTIMAL;
         info.usage       = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
@@ -552,7 +735,16 @@ namespace hearth {
     }
 
     void VulkanRenderTarget::Destroy() {
-        m_Color.reset();
+        for (Attachment& attachment : m_Color) {
+            if (attachment.msaaView)
+                vkDestroyImageView(m_Device.Raw(), attachment.msaaView, nullptr);
+            if (attachment.msaaImage)
+                vmaDestroyImage(m_Device.Allocator(), attachment.msaaImage,
+                                attachment.msaaAllocation);
+            attachment.resolve.reset();
+        }
+        m_Color.clear();
+
         if (m_DepthView)  vkDestroyImageView(m_Device.Raw(), m_DepthView, nullptr);
         if (m_DepthImage) vmaDestroyImage(m_Device.Allocator(), m_DepthImage, m_DepthAllocation);
         m_DepthView  = VK_NULL_HANDLE;
@@ -569,33 +761,59 @@ namespace hearth {
         Build();
     }
 
-    VkImageView VulkanRenderTarget::ColorView() const { return m_Color->View(); }
+    Ref<Texture> VulkanRenderTarget::ColorTexture(u32 index) const {
+        HEARTH_ASSERT(index < m_Color.size(), "attachment {} of '{}', which has {}", index,
+                      m_Desc.debugName, m_Color.size());
+        return m_Color[index].resolve;
+    }
 
-    void VulkanRenderTarget::ReadPixels(void* outPixels, u64 size) {
-        const u64 expected = u64(m_Desc.width) * m_Desc.height * FormatSize(m_Desc.colorFormat);
+    VkImageView VulkanRenderTarget::ColorView(u32 index) const {
+        const Attachment& attachment = m_Color[index];
+        return attachment.msaaView ? attachment.msaaView : attachment.resolve->View();
+    }
+
+    VkImageView VulkanRenderTarget::ResolveView(u32 index) const {
+        const Attachment& attachment = m_Color[index];
+        return attachment.msaaView ? attachment.resolve->View() : VK_NULL_HANDLE;
+    }
+
+    VkImage VulkanRenderTarget::ColorImage(u32 index) const {
+        const Attachment& attachment = m_Color[index];
+        return attachment.msaaImage ? attachment.msaaImage : attachment.resolve->Image();
+    }
+
+    void VulkanRenderTarget::ReadPixels(void* outPixels, u64 size, u32 index) {
+        HEARTH_ASSERT(index < m_Color.size(), "attachment {} of '{}', which has {}", index,
+                      m_Desc.debugName, m_Color.size());
+        // Always the resolve image: the multisampled one cannot be copied from, and its
+        // per-sample contents are not what a caller asking for pixels means.
+        VulkanTexture* colour = m_Color[index].resolve.get();
+
+        const Format format = m_Desc.colorFormats[index];
+        const u64 expected = u64(m_Desc.width) * m_Desc.height * FormatSize(format);
         HEARTH_ASSERT(size >= expected,
                       "readback buffer of {} bytes is short of the {} bytes {}x{} {} needs",
-                      size, expected, m_Desc.width, m_Desc.height, FormatName(m_Desc.colorFormat));
+                      size, expected, m_Desc.width, m_Desc.height, FormatName(format));
 
         VulkanBuffer readback(m_Device, BufferDesc{ expected, BufferUsage::Staging,
                                                     MemoryKind::HostVisible, "readback" });
 
-        const VkImageLayout from = m_Color->Layout();
+        const VkImageLayout from = colour->Layout();
         m_Device.ImmediateSubmitRaw([&](VkCommandBuffer cmd) {
-            TransitionImageRaw(cmd, m_Color->Image(), from,
+            TransitionImageRaw(cmd, colour->Image(), from,
                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
 
             VkBufferImageCopy copy{};
             copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
             copy.imageExtent = { m_Desc.width, m_Desc.height, 1 };
-            vkCmdCopyImageToBuffer(cmd, m_Color->Image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            vkCmdCopyImageToBuffer(cmd, colour->Image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                    readback.Raw(), 1, &copy);
 
-            TransitionImageRaw(cmd, m_Color->Image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            TransitionImageRaw(cmd, colour->Image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                VK_IMAGE_ASPECT_COLOR_BIT);
         });
-        m_Color->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        colour->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
         std::memcpy(outPixels, readback.Map(), expected);
     }

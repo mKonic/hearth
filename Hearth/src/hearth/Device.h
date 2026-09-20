@@ -22,6 +22,14 @@ namespace hearth {
         // the former by design.
         bool softwareRasterizer = false;
         u32 maxTextureSize = 0;
+        // 1 when the device has no anisotropic filtering, or it was not enabled. Asking a
+        // texture for more than this is clamped, not refused.
+        f32 maxAnisotropy = 1.0f;
+        // The most colour attachments one pipeline may write, and the highest sample count
+        // both colour and depth support. Ask rather than assume: 8 attachments and 8 samples
+        // are common, neither is guaranteed.
+        u32 maxColorAttachments = 1;
+        u32 maxSamples = 1;
         // The largest array binding this device accepts. Ask for this rather than declaring a
         // constant -- it is a device property, and a renderer that hardcodes 32 either wastes the
         // hardware or fails to create a pipeline on something smaller.

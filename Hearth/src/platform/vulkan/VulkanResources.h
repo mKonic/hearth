@@ -40,8 +40,10 @@ namespace hearth {
 
         void Upload(const void* pixels, u64 size) override;
         void UploadRegion(const void* pixels, u32 x, u32 y, u32 w, u32 h) override;
+        void UploadLayer(const void* pixels, u64 size, u32 layer) override;
         u32 Width()  const override { return m_Desc.width; }
         u32 Height() const override { return m_Desc.height; }
+        u32 MipLevels() const override { return m_MipLevels; }
         const TextureDesc& Desc() const override { return m_Desc; }
 
         VkImage       Image()   const { return m_Image; }
@@ -51,8 +53,14 @@ namespace hearth {
         void SetLayout(VkImageLayout layout) { m_Layout = layout; }
 
     private:
+        // Copies `pixels` into `layer`, then rebuilds the mip chain for that layer if there
+        // is one. Both upload paths funnel here.
+        void UploadInto(const void* pixels, u32 x, u32 y, u32 w, u32 h, u32 layer);
+        void GenerateMips(VkCommandBuffer cmd, u32 layer);
+
         VulkanDevice& m_Device;
         TextureDesc   m_Desc;
+        u32           m_MipLevels = 1;
         VkImage       m_Image = VK_NULL_HANDLE;
         VkImageView   m_View = VK_NULL_HANDLE;
         // Owned by the device's sampler cache, not by this texture.
@@ -145,21 +153,39 @@ namespace hearth {
 
         u32 Width()  const override { return m_Desc.width; }
         u32 Height() const override { return m_Desc.height; }
-        Ref<Texture> ColorTexture() const override { return m_Color; }
+        u32 ColorAttachmentCount() const override { return static_cast<u32>(m_Color.size()); }
+        Ref<Texture> ColorTexture(u32 index = 0) const override;
         void Resize(u32 width, u32 height) override;
-        void ReadPixels(void* outPixels, u64 size) override;
+        void ReadPixels(void* outPixels, u64 size, u32 index = 0) override;
 
-        VkImageView ColorView() const;
+        // The view a render pass writes into: the multisampled image when this target is
+        // multisampled, otherwise the resolve image itself.
+        VkImageView ColorView(u32 index) const;
+        // Where a multisampled attachment resolves to. VK_NULL_HANDLE when samples == 1.
+        VkImageView ResolveView(u32 index) const;
+        // The image a render pass actually writes: the multisampled one when there is one.
+        VkImage ColorImage(u32 index) const;
         VkImageView DepthView() const { return m_DepthView; }
+        VkSampleCountFlagBits Samples() const { return m_Samples; }
         const RenderTargetDesc& Desc() const { return m_Desc; }
 
     private:
         void Build();
         void Destroy();
 
-        VulkanDevice&      m_Device;
-        RenderTargetDesc   m_Desc;
-        Ref<VulkanTexture> m_Color;
+        // One colour attachment: the sampleable image, plus the multisampled one that
+        // resolves into it when this target is multisampled.
+        struct Attachment {
+            Ref<VulkanTexture> resolve;
+            VkImage       msaaImage = VK_NULL_HANDLE;
+            VkImageView   msaaView = VK_NULL_HANDLE;
+            VmaAllocation msaaAllocation = nullptr;
+        };
+
+        VulkanDevice&           m_Device;
+        RenderTargetDesc        m_Desc;
+        std::vector<Attachment> m_Color;
+        VkSampleCountFlagBits   m_Samples = VK_SAMPLE_COUNT_1_BIT;
         VkImage            m_DepthImage = VK_NULL_HANDLE;
         VkImageView        m_DepthView = VK_NULL_HANDLE;
         VmaAllocation      m_DepthAllocation = nullptr;

@@ -94,7 +94,7 @@ void RunSystemTests() {
                 .attributes = { { 0, Format::RG32_SFLOAT, 0 },
                                 { 1, Format::RGBA32_SFLOAT, 8 } } } };
             pipeline.pushConstantSize = 16;
-            pipeline.colorFormat = Format::RGBA8_UNORM;
+            pipeline.colorFormats = { Format::RGBA8_UNORM };
             pipeline.debugName = "cache-probe";
             return device->CreatePipeline(pipeline) != nullptr;
         };

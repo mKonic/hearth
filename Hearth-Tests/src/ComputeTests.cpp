@@ -145,7 +145,7 @@ void RunComputeTests() {
                                       .count = 4, .stages = StageBit(ShaderStage::Fragment) } };
         gfx.pushConstantSize = sizeof(u32);
         gfx.blend = BlendMode::None;
-        gfx.colorFormat = Format::RGBA8_UNORM;
+        gfx.colorFormats = { Format::RGBA8_UNORM };
         gfx.debugName = "sample-storage";
         auto gfxPipeline = gpu.CreatePipeline(gfx);
         auto gfxGroup = gpu.CreateBindGroup(gfxPipeline, { BindGroupEntry{

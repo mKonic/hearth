@@ -32,6 +32,21 @@ namespace hearth {
         TextureUsage usage = TextureUsage::Sampled;
         Filter minFilter = Filter::Linear, magFilter = Filter::Linear;
         AddressMode addressMode = AddressMode::ClampToEdge;
+
+        TextureKind kind = TextureKind::Texture2D;
+        // Layers for an array; must be 6 for a cube, and 1 for a plain 2D texture.
+        u32 layers = 1;
+
+        // Builds the full mip chain on Upload by successive halving. Worth it for anything
+        // drawn smaller than its own size: minifying through a linear filter with no mips
+        // resamples across texels every frame, which is what makes small text and distant
+        // sprites look like they are crawling rather than merely small.
+        bool generateMipmaps = false;
+
+        // 1 disables anisotropic filtering. Clamped to the device limit, so asking for 16 on
+        // hardware that offers 8 gives 8 rather than failing. Only meaningful with mipmaps.
+        f32 maxAnisotropy = 1.0f;
+
         std::string debugName;
     };
 
@@ -40,8 +55,12 @@ namespace hearth {
         virtual ~Texture() = default;
         virtual void Upload(const void* pixels, u64 size) = 0;
         virtual void UploadRegion(const void* pixels, u32 x, u32 y, u32 w, u32 h) = 0;
+        // One layer of an array or one face of a cube. Face order for a cube is +X, -X, +Y,
+        // -Y, +Z, -Z.
+        virtual void UploadLayer(const void* pixels, u64 size, u32 layer) = 0;
         virtual u32 Width()  const = 0;
         virtual u32 Height() const = 0;
+        virtual u32 MipLevels() const = 0;
         virtual const TextureDesc& Desc() const = 0;
 
         f32 AspectRatio() const {
@@ -72,11 +91,16 @@ namespace hearth {
         BlendMode blend = BlendMode::AlphaStraight;
         bool depthTest = false;
         bool depthWrite = false;
-        // Must match the target this pipeline renders into. With dynamic rendering there is no
-        // VkRenderPass to check it against, so a mismatch is a validation error at draw time
-        // rather than at creation -- pass Device::SwapchainFormat() unless you mean otherwise.
-        Format colorFormat = Format::BGRA8_UNORM;
+        // Attachment formats, in order, and they must match the target this pipeline renders
+        // into. With dynamic rendering there is no VkRenderPass to check against, so a
+        // mismatch is a validation error at draw time rather than at creation. One entry is
+        // the ordinary case: `{ device->SwapchainFormat() }`.
+        std::vector<Format> colorFormats;
         Format depthFormat = Format::Undefined;
+
+        // Must equal the sample count of the target. 1 is no multisampling.
+        u32 samples = 1;
+
         std::string debugName;
     };
 
@@ -134,20 +158,33 @@ namespace hearth {
         virtual ~RenderTarget() = default;
         virtual u32 Width()  const = 0;
         virtual u32 Height() const = 0;
-        virtual Ref<Texture> ColorTexture() const = 0;
+        virtual u32 ColorAttachmentCount() const = 0;
+        // The single-sample, sampleable image for an attachment. On a multisampled target this
+        // is the resolve destination, not the multisampled image itself -- which is what a
+        // caller wants, since a multisampled image cannot be sampled.
+        virtual Ref<Texture> ColorTexture(u32 index = 0) const = 0;
         virtual void Resize(u32 width, u32 height) = 0;
 
-        // Copies the colour attachment back to CPU memory, tightly packed, in the target's own
-        // colorFormat -- so a caller that wants RGBA asks for an RGBA target and does no
-        // channel swizzling of its own. Blocking, and not a per-frame path: this waits for the
-        // GPU. `size` must be width * height * FormatSize(colorFormat).
-        virtual void ReadPixels(void* outPixels, u64 size) = 0;
+        // Copies an attachment back to CPU memory, tightly packed, in its own format -- so a
+        // caller that wants RGBA asks for an RGBA target and does no channel swizzling of its
+        // own. Blocking, and not a per-frame path: this waits for the GPU. `size` must be
+        // width * height * FormatSize(that attachment's format).
+        virtual void ReadPixels(void* outPixels, u64 size, u32 index = 0) = 0;
     };
 
     struct RenderTargetDesc {
         u32 width = 1, height = 1;
-        Format colorFormat = Format::RGBA8_UNORM;
+        // One entry per colour attachment. Several is the deferred / multiple-render-target
+        // case, and the pipeline drawing into it must declare the same formats in the same
+        // order.
+        std::vector<Format> colorFormats;
         Format depthFormat = Format::Undefined;
+
+        // 2, 4, 8... for multisampling, clamped to Caps().maxSamples. The multisampled images
+        // are owned internally and resolved into the sampleable ColorTexture at the end of
+        // every render pass, so nothing downstream has to know the target is multisampled.
+        u32 samples = 1;
+
         std::string debugName;
     };
 

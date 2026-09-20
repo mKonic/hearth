@@ -4,6 +4,8 @@
 #include "platform/vulkan/VulkanResources.h"
 #include "platform/vulkan/VulkanSwapchain.h"
 
+#include <vector>
+
 namespace hearth {
 
     void VulkanCommandList::Begin(VkCommandBuffer cmd, u32 swapchainImageIndex, bool offscreenOnly) {
@@ -47,19 +49,62 @@ namespace hearth {
         m_InPass = true;
         m_CurrentTarget = static_cast<VulkanRenderTarget*>(desc.target);
 
-        VkImageView colorView = VK_NULL_HANDLE;
+        std::vector<VkRenderingAttachmentInfo> colorAttachments;
         VkImageView depthView = VK_NULL_HANDLE;
         u32 width = 0, height = 0;
 
-        if (m_CurrentTarget) {
-            auto* color = static_cast<VulkanTexture*>(m_CurrentTarget->ColorTexture().get());
-            Barrier(color->Image(), color->Layout(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
-                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-            color->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        const VkClearColorValue clear{ { desc.clearColor.r, desc.clearColor.g,
+                                         desc.clearColor.b, desc.clearColor.a } };
+        const VkAttachmentLoadOp loadOp =
+            desc.loadOp == LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
+          : desc.loadOp == LoadOp::Load  ? VK_ATTACHMENT_LOAD_OP_LOAD
+                                         : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 
-            colorView = m_CurrentTarget->ColorView();
+        if (m_CurrentTarget) {
+            const u32 count = m_CurrentTarget->ColorAttachmentCount();
+            colorAttachments.reserve(count);
+
+            for (u32 i = 0; i < count; ++i) {
+                auto* color = static_cast<VulkanTexture*>(
+                    m_CurrentTarget->ColorTexture(i).get());
+                Barrier(color->Image(), color->Layout(),
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+                        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+                color->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+                // The multisampled image needs the same transition, and it is a separate
+                // image from the one above. From UNDEFINED every pass on purpose: nothing
+                // ever reads it back, so there are no contents worth preserving and
+                // discarding them is what lets a tiler keep it on-chip.
+                if (VkImage msaa = m_CurrentTarget->ColorImage(i); msaa != color->Image()) {
+                    Barrier(msaa, VK_IMAGE_LAYOUT_UNDEFINED,
+                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+                            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+                }
+
+                VkRenderingAttachmentInfo attachment{
+                    VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+                attachment.imageView   = m_CurrentTarget->ColorView(i);
+                attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                attachment.loadOp      = loadOp;
+                attachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+                attachment.clearValue.color = clear;
+
+                // Multisampled: the pass writes the multisampled image and the hardware
+                // resolves into the sampleable one as the pass ends, so nothing downstream
+                // has to know this target was multisampled at all.
+                if (VkImageView resolve = m_CurrentTarget->ResolveView(i)) {
+                    attachment.resolveMode        = VK_RESOLVE_MODE_AVERAGE_BIT;
+                    attachment.resolveImageView   = resolve;
+                    attachment.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                }
+                colorAttachments.push_back(attachment);
+            }
+
             depthView = m_CurrentTarget->DepthView();
             width     = m_CurrentTarget->Width();
             height    = m_CurrentTarget->Height();
@@ -77,20 +122,18 @@ namespace hearth {
                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
                 m_TouchedSwapchain = true;
             }
-            colorView = swapchain->View(m_ImageIndex);
-            width     = swapchain->Width();
-            height    = swapchain->Height();
-        }
 
-        VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-        color.imageView   = colorView;
-        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        color.loadOp      = desc.loadOp == LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
-                          : desc.loadOp == LoadOp::Load  ? VK_ATTACHMENT_LOAD_OP_LOAD
-                                                         : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        color.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
-        color.clearValue.color = { { desc.clearColor.r, desc.clearColor.g,
-                                     desc.clearColor.b, desc.clearColor.a } };
+            VkRenderingAttachmentInfo attachment{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+            attachment.imageView   = swapchain->View(m_ImageIndex);
+            attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            attachment.loadOp      = loadOp;
+            attachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+            attachment.clearValue.color = clear;
+            colorAttachments.push_back(attachment);
+
+            width  = swapchain->Width();
+            height = swapchain->Height();
+        }
 
         VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
         depth.imageView   = depthView;
@@ -102,8 +145,8 @@ namespace hearth {
         VkRenderingInfo info{ VK_STRUCTURE_TYPE_RENDERING_INFO };
         info.renderArea = { {0, 0}, { width, height } };
         info.layerCount = 1;
-        info.colorAttachmentCount = 1;
-        info.pColorAttachments = &color;
+        info.colorAttachmentCount = static_cast<u32>(colorAttachments.size());
+        info.pColorAttachments = colorAttachments.data();
         info.pDepthAttachment = depthView ? &depth : nullptr;
 
         vkCmdBeginRendering(m_Cmd, &info);
@@ -123,15 +166,18 @@ namespace hearth {
         m_InPass = false;
 
         if (m_CurrentTarget) {
-            // Leave an offscreen target sampleable: the next thing that touches it is almost
+            // Leave every attachment sampleable: the next thing that touches one is almost
             // always a shader reading it back, or a readback copy.
-            auto* color = static_cast<VulkanTexture*>(m_CurrentTarget->ColorTexture().get());
-            Barrier(color->Image(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-            color->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            for (u32 i = 0; i < m_CurrentTarget->ColorAttachmentCount(); ++i) {
+                auto* color = static_cast<VulkanTexture*>(
+                    m_CurrentTarget->ColorTexture(i).get());
+                Barrier(color->Image(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+                color->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
         }
         m_CurrentTarget = nullptr;
         m_BoundPipeline = nullptr;

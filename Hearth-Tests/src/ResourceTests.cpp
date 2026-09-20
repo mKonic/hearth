@@ -98,7 +98,7 @@ void RunResourceTests() {
         RenderTargetDesc desc;
         desc.width = 16;
         desc.height = 8;
-        desc.colorFormat = Format::RGBA8_UNORM;
+        desc.colorFormats = { Format::RGBA8_UNORM };
         desc.debugName = "resizable";
         auto target = gpu.CreateRenderTarget(desc);
 

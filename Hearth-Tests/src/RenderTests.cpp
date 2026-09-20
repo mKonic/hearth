@@ -54,7 +54,7 @@ Ref<Pipeline> FlatPipeline(BlendMode blend) {
     } };
     desc.pushConstantSize = sizeof(FlatPush);
     desc.blend       = blend;
-    desc.colorFormat = Format::RGBA8_UNORM;
+    desc.colorFormats = { Format::RGBA8_UNORM };
     desc.debugName   = "flat";
     return Gpu().CreatePipeline(desc);
 }
@@ -254,7 +254,7 @@ void RunRenderTests() {
             } } };
         desc.pushConstantSize = sizeof(FlatPush);
         desc.blend       = BlendMode::None;
-        desc.colorFormat = Format::RGBA8_UNORM;
+        desc.colorFormats = { Format::RGBA8_UNORM };
         desc.debugName   = "discard";
         auto pipeline = Gpu().CreatePipeline(desc);
         CHECK(pipeline != nullptr);
@@ -305,7 +305,7 @@ void RunRenderTests() {
             .stages = StageBit(ShaderStage::Fragment) } };
         desc.pushConstantSize = sizeof(u32);
         desc.blend       = BlendMode::None;
-        desc.colorFormat = Format::RGBA8_UNORM;
+        desc.colorFormats = { Format::RGBA8_UNORM };
         desc.debugName   = "textured";
         auto pipeline = Gpu().CreatePipeline(desc);
 

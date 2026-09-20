@@ -26,10 +26,15 @@ namespace hearth {
             return VK_FALSE;
         }
 
-        u32 SamplerKey(Filter minFilter, Filter magFilter, AddressMode address) {
+        u32 SamplerKey(Filter minFilter, Filter magFilter, AddressMode address,
+                       u32 mipLevels, u32 anisotropy) {
+            // mipLevels only matters as a maxLod, and anisotropy is clamped to a small
+            // integer before it gets here, so both fit alongside the three enums.
             return static_cast<u32>(minFilter)
-                 | (static_cast<u32>(magFilter) << 8)
-                 | (static_cast<u32>(address)   << 16);
+                 | (static_cast<u32>(magFilter) << 2)
+                 | (static_cast<u32>(address)   << 4)
+                 | ((mipLevels & 0x1Fu)         << 8)
+                 | ((anisotropy & 0x1Fu)        << 16);
         }
 
     }
@@ -169,6 +174,7 @@ namespace hearth {
         f12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         f12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
 
+
         vkb::PhysicalDeviceSelector selector{ instance };
         selector.set_minimum_version(floor)
                 .set_required_features_13(f13)
@@ -184,17 +190,26 @@ namespace hearth {
             return false;
         }
 
+        vkb::PhysicalDevice chosen = physical.value();
+
+        // Anisotropic filtering is optional in the spec, so it is enabled if the device has
+        // it rather than required: a device without it still runs, and Caps().maxAnisotropy
+        // reports 1 so a caller can tell.
+        VkPhysicalDeviceFeatures optionalCore{};
+        optionalCore.samplerAnisotropy = VK_TRUE;
+        const bool anisotropy = chosen.enable_features_if_present(optionalCore);
+
         VkPhysicalDeviceProperties selected{};
-        vkGetPhysicalDeviceProperties(physical.value().physical_device, &selected);
+        vkGetPhysicalDeviceProperties(chosen.physical_device, &selected);
         // The usable version is the lowest of the three parties: loader, headers, device.
         m_ApiVersion = std::min(instanceVersion, selected.apiVersion);
 
         OptionalFeatureStorage optionalStorage;
         std::vector<void*> optionalChain;
         const OptionalFeatures optional = ChainOptionalFeatures(
-            physical.value().physical_device, m_ApiVersion, optionalStorage, optionalChain);
+            chosen.physical_device, m_ApiVersion, optionalStorage, optionalChain);
 
-        vkb::DeviceBuilder deviceBuilder{ physical.value() };
+        vkb::DeviceBuilder deviceBuilder{ chosen };
         for (void* link : optionalChain) deviceBuilder.add_pNext(link);
 
         auto built = deviceBuilder.build();
@@ -203,7 +218,7 @@ namespace hearth {
             return false;
         }
 
-        m_Physical       = physical.value().physical_device;
+        m_Physical       = chosen.physical_device;
         m_Device         = built.value().device;
         m_GraphicsQueue  = built.value().get_queue(vkb::QueueType::graphics).value();
         m_GraphicsFamily = built.value().get_queue_index(vkb::QueueType::graphics).value();
@@ -221,6 +236,15 @@ namespace hearth {
         m_Caps.discrete   = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
         m_Caps.softwareRasterizer = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
         m_Caps.maxTextureSize = props.limits.maxImageDimension2D;
+        m_Caps.maxAnisotropy = anisotropy ? props.limits.maxSamplerAnisotropy : 1.0f;
+        m_Caps.maxColorAttachments = props.limits.maxColorAttachments;
+        // The highest count BOTH colour and depth support. A target multisamples them
+        // together, so the useful figure is the intersection rather than either alone.
+        const VkSampleCountFlags sampleMask = props.limits.framebufferColorSampleCounts
+                                            & props.limits.framebufferDepthSampleCounts;
+        for (u32 count : { 64u, 32u, 16u, 8u, 4u, 2u }) {
+            if (sampleMask & count) { m_Caps.maxSamples = count; break; }
+        }
         m_Caps.maxTexturesPerBindGroup =
             std::max(indexing.maxDescriptorSetUpdateAfterBindSampledImages,
                      props.limits.maxPerStageDescriptorSampledImages);
@@ -434,10 +458,19 @@ namespace hearth {
 
     Swapchain* VulkanDevice::GetSwapchain() { return m_Swapchain.get(); }
 
-    VkSampler VulkanDevice::SamplerFor(Filter minFilter, Filter magFilter, AddressMode address) {
+    VkSampler VulkanDevice::SamplerFor(Filter minFilter, Filter magFilter, AddressMode address,
+                                       u32 mipLevels, f32 maxAnisotropy) {
         const std::scoped_lock lock(m_SamplerMutex);
 
-        const u32 key = SamplerKey(minFilter, magFilter, address);
+        // Asking for more anisotropy than the device offers is a request, not an error: clamp
+        // it and carry on, because refusing to create the texture would be a worse answer to
+        // "this machine's filtering is not as good as that one's".
+        const f32 anisotropy = m_Caps.maxAnisotropy > 1.0f
+                             ? std::min(maxAnisotropy, m_Caps.maxAnisotropy)
+                             : 1.0f;
+
+        const u32 key = SamplerKey(minFilter, magFilter, address, mipLevels,
+                                   static_cast<u32>(anisotropy));
         if (auto it = m_Samplers.find(key); it != m_Samplers.end()) return it->second;
 
         VkSamplerCreateInfo info{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
@@ -446,17 +479,24 @@ namespace hearth {
         info.addressModeU = info.addressModeV = info.addressModeW = ToVk(address);
         info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         info.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-        info.maxLod = VK_LOD_CLAMP_NONE;
+        // Clamped to the levels this texture actually has. VK_LOD_CLAMP_NONE on a
+        // single-level image samples a mip that is not there.
+        info.maxLod = static_cast<f32>(mipLevels);
+        if (anisotropy > 1.0f) {
+            info.anisotropyEnable = VK_TRUE;
+            info.maxAnisotropy    = anisotropy;
+        }
 
         VkSampler sampler = VK_NULL_HANDLE;
         HEARTH_VK_CHECK(vkCreateSampler(m_Device, &info, nullptr, &sampler));
         // Shared between every texture with these settings, so it is named for the settings
         // rather than for whichever texture happened to ask for it first.
         SetObjectName(m_Device, sampler,
-                      std::format("sampler({}/{}/{})",
+                      std::format("sampler({}/{}/{}/mips{}/aniso{})",
                                   minFilter == Filter::Nearest ? "nearest" : "linear",
                                   magFilter == Filter::Nearest ? "nearest" : "linear",
-                                  static_cast<int>(address)));
+                                  static_cast<int>(address), mipLevels,
+                                  static_cast<int>(anisotropy)));
         m_Samplers.emplace(key, sampler);
         return sampler;
     }
