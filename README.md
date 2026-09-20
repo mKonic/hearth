@@ -117,8 +117,10 @@ same formats in the same order. More than `Caps().maxColorAttachments` of them a
 `width * height * FormatSize(colorFormats[index])`.
 
 `samples` above 1 multisamples: hearth owns the multisampled images and resolves them into the
-sampleable `ColorTexture(i)` as each pass ends. It is rounded down to a power of two and
-clamped to `Caps().maxSamples`, with a warning when either applies.
+sampleable `ColorTexture(i)` as each pass ends. It is rounded down to a count the device
+actually supports, with a warning when that changes it. The supported counts are not
+contiguous — a device can offer 1, 4 and 8 and no 2 — so `Caps().SupportedSamples(n)` answers
+what a given request will become, and `Caps().sampleCountMask` has the full set.
 
 ## Compute
 

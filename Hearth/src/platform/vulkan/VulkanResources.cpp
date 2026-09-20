@@ -655,13 +655,11 @@ namespace hearth {
                       device.Caps().maxColorAttachments);
 
         // Clamped rather than refused: a target asking for 8x on hardware that does 4x should
-        // render at 4x, not fail to exist. Rounded down to a power of two first, because
-        // VkSampleCountFlagBits is a bitmask -- 3 is not a sample count, it is samples 1 and
-        // 2 at once, and casting it straight through produces an invalid enum.
+        // render at 4x, not fail to exist. Rounded down through the device's own mask, not to
+        // a power of two -- the supported counts are not contiguous (lavapipe offers 1, 4 and
+        // 8 and no 2), so the nearest power of two can be one the device rejects outright.
         const u32 requested = m_Desc.samples ? m_Desc.samples : 1;
-        u32 samples = std::min(requested, device.Caps().maxSamples);
-        while (samples > 1 && (samples & (samples - 1)) != 0) --samples;
-        m_Desc.samples = samples;
+        m_Desc.samples = device.Caps().SupportedSamples(requested);
         if (m_Desc.samples != requested)
             HEARTH_WARN("render target '{}' asked for {}x MSAA; using {}x",
                         m_Desc.debugName, requested, m_Desc.samples);

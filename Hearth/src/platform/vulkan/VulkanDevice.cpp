@@ -240,10 +240,11 @@ namespace hearth {
         m_Caps.maxColorAttachments = props.limits.maxColorAttachments;
         // The highest count BOTH colour and depth support. A target multisamples them
         // together, so the useful figure is the intersection rather than either alone.
-        const VkSampleCountFlags sampleMask = props.limits.framebufferColorSampleCounts
-                                            & props.limits.framebufferDepthSampleCounts;
+        m_Caps.sampleCountMask = static_cast<u32>(props.limits.framebufferColorSampleCounts
+                                                & props.limits.framebufferDepthSampleCounts)
+                               | 1u;   // 1x is always available
         for (u32 count : { 64u, 32u, 16u, 8u, 4u, 2u }) {
-            if (sampleMask & count) { m_Caps.maxSamples = count; break; }
+            if (m_Caps.sampleCountMask & count) { m_Caps.maxSamples = count; break; }
         }
         m_Caps.maxTexturesPerBindGroup =
             std::max(indexing.maxDescriptorSetUpdateAfterBindSampledImages,

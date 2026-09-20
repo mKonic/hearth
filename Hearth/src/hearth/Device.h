@@ -30,6 +30,19 @@ namespace hearth {
         // are common, neither is guaranteed.
         u32 maxColorAttachments = 1;
         u32 maxSamples = 1;
+        // Which sample counts this device actually supports, as a bitmask of the counts
+        // themselves: bit 2 set means 2x is available. NOT contiguous -- lavapipe offers
+        // 1, 4 and 8 and no 2 -- so "at most maxSamples" is not the same question as
+        // "supported", and a target rounds down through this rather than through a power of
+        // two. `SupportedSamples(n)` is the usual way to ask.
+        u32 sampleCountMask = 1;
+
+        // The highest supported count not above `wanted`. Always at least 1.
+        u32 SupportedSamples(u32 wanted) const {
+            for (u32 count = 64; count >= 1; count >>= 1)
+                if (count <= wanted && (sampleCountMask & count)) return count;
+            return 1;
+        }
         // The largest array binding this device accepts. Ask for this rather than declaring a
         // constant -- it is a device property, and a renderer that hardcodes 32 either wastes the
         // hardware or fails to create a pipeline on something smaller.
