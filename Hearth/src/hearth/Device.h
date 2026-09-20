@@ -69,11 +69,22 @@ namespace hearth {
         // Vulkan version, so VK_API_VERSION_1_4 rather than 4 or 14; 0 leaves hearth's floor
         // in place. CreateDevice returns null and logs the reason when it cannot be met.
         u32 minimumApiVersion = 0;
+
+        // Where to keep the pipeline cache between runs. Empty means in-memory only, which
+        // still helps a process that builds several similar pipelines but starts cold every
+        // launch. The file is written when the device is destroyed, and a stale or corrupt
+        // one is discarded rather than trusted -- the driver validates its own header.
+        std::string pipelineCachePath;
         bool vsync = true;
         std::string appName = "hearth";
         std::string engineName = "hearth";
     };
 
+    // Thread safety: resource creation (CreateBuffer, CreateTexture, CreateShader,
+    // CreatePipeline, CreateBindGroup, CreateRenderTarget) and the uploads those perform are
+    // safe to call from several threads at once, which is what an asset loader wants. The
+    // frame loop is not -- BeginFrame, the CommandList it returns, EndFrame and
+    // SubmitImmediate belong to one thread.
     class Device {
     public:
         virtual ~Device() = default;

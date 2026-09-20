@@ -98,6 +98,18 @@ target->ReadPixels(pixels.data(), pixels.size());
 RGBA target and no channel swizzling is needed. Calling `SubmitImmediate` while a frame is
 open aborts — it blocks on the GPU, which would stall the frame being recorded.
 
+## Threads
+
+Resource creation — `CreateBuffer`, `CreateTexture`, `CreateShader`, `CreatePipeline`,
+`CreateBindGroup`, `CreateRenderTarget` — and the uploads those perform are safe to call from
+several threads at once, which is what an asset loader needs. The frame loop is not:
+`BeginFrame`, the `CommandList` it returns, `EndFrame` and `SubmitImmediate` belong to one
+thread.
+
+`DeviceDesc::pipelineCachePath` keeps the driver's pipeline cache between runs; it is written
+when the device is destroyed. An empty path keeps the cache in memory for the process only. A
+stale or corrupt file is discarded, not fatal.
+
 ## Windows, sizes and surface loss
 
 The host drives three calls. `OnWindowResize(width, height)` is the ordinary one. The other two

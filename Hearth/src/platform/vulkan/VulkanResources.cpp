@@ -343,8 +343,8 @@ namespace hearth {
         info.pColorBlendState = &blendState;
         info.pDynamicState = &dynamic;
         info.layout = m_Layout;
-        HEARTH_VK_CHECK(vkCreateGraphicsPipelines(m_Device.Raw(), VK_NULL_HANDLE, 1, &info,
-                                                  nullptr, &m_Pipeline));
+        HEARTH_VK_CHECK(vkCreateGraphicsPipelines(m_Device.Raw(), m_Device.PipelineCache(), 1,
+                                                  &info, nullptr, &m_Pipeline));
         SetObjectName(m_Device.Raw(), m_Pipeline, desc.debugName);
         SetObjectName(m_Device.Raw(), m_Layout, desc.debugName + ".layout");
     }

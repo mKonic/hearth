@@ -85,6 +85,7 @@ int main() {
     RunDeviceTests();
     RunResourceTests();
     RunRenderTests();
+    RunSystemTests();
 
     // A green run means much less without the validation layers: most of what this suite is
     // positioned to catch -- bad barriers, unwritten descriptors, layout mismatches -- is

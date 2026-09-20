@@ -3,6 +3,8 @@
 #include "hearth/Device.h"
 #include "platform/vulkan/VulkanCommon.h"
 
+#include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -60,6 +62,7 @@ namespace hearth {
         // The pool currently being filled. For hearth/vulkan/Native.h; a caller that allocates
         // from it directly should expect it to be exhausted eventually and handle that itself.
         VkDescriptorPool DescriptorPool() const { return m_DescriptorPools.back(); }
+        VkPipelineCache  PipelineCache() const { return m_PipelineCache; }
 
         void ImmediateSubmitRaw(const std::function<void(VkCommandBuffer)>& record);
 
@@ -75,6 +78,8 @@ namespace hearth {
     private:
         bool InitVulkan(const DeviceDesc&);
         bool InitAllocator();
+        void InitPipelineCache(const std::string& path);
+        void SavePipelineCache();
         VkDescriptorPool AddDescriptorPool();
         bool InitFrames();
         void DestroyFrames();
@@ -106,12 +111,22 @@ namespace hearth {
 
         VkCommandPool m_ImmediatePool  = VK_NULL_HANDLE;
         VkFence       m_ImmediateFence = VK_NULL_HANDLE;
+        // One pool and one fence, so two threads staging an upload at the same time would
+        // otherwise hand each other's command buffers to the queue.
+        std::mutex    m_ImmediateMutex;
+
+        VkPipelineCache m_PipelineCache = VK_NULL_HANDLE;
+        std::string     m_PipelineCachePath;
 
         Scope<VulkanSwapchain>   m_Swapchain;
         Scope<VulkanCommandList> m_CommandList;
         Scope<VulkanCommandList> m_ImmediateList;
 
         std::unordered_map<u32, VkSampler> m_Samplers;
+        std::mutex m_SamplerMutex;
+        // Guards the pool chain: an allocation can append a pool, which reallocates the vector
+        // another thread may be reading.
+        std::mutex m_DescriptorMutex;
 
         std::vector<Frame> m_Frames;
         u32  m_FrameIndex = 0;

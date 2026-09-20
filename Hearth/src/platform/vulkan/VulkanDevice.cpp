@@ -8,6 +8,8 @@
 #include <VkBootstrap.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 
 namespace hearth {
 
@@ -37,6 +39,7 @@ namespace hearth {
         if (!InitVulkan(desc))   return;
         if (!InitAllocator())    return;
         if (!InitFrames())       return;
+        InitPipelineCache(desc.pipelineCachePath);
         if (m_Surface && !BuildSwapchain()) return;
 
         m_CommandList   = CreateScope<VulkanCommandList>(*this);
@@ -46,6 +49,8 @@ namespace hearth {
 
     VulkanDevice::~VulkanDevice() {
         if (m_Device) vkDeviceWaitIdle(m_Device);
+        SavePipelineCache();
+        if (m_PipelineCache) vkDestroyPipelineCache(m_Device, m_PipelineCache, nullptr);
         m_Swapchain.reset();
         DestroyFrames();
         for (auto& [key, sampler] : m_Samplers) vkDestroySampler(m_Device, sampler, nullptr);
@@ -284,6 +289,8 @@ namespace hearth {
     }
 
     VulkanDevice::DescriptorAllocation VulkanDevice::AllocateDescriptorSet(VkDescriptorSetLayout layout) {
+        const std::scoped_lock lock(m_DescriptorMutex);
+
         VkDescriptorSetAllocateInfo alloc{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
         alloc.descriptorPool     = m_DescriptorPools.back();
         alloc.descriptorSetCount = 1;
@@ -302,8 +309,68 @@ namespace hearth {
     }
 
     void VulkanDevice::FreeDescriptorSet(const DescriptorAllocation& allocation) {
+        const std::scoped_lock lock(m_DescriptorMutex);
         if (allocation.set)
             vkFreeDescriptorSets(m_Device, allocation.pool, 1, &allocation.set);
+    }
+
+    // A pipeline cache is a driver-owned blob: it turns the second and later compilations of
+    // the same pipeline into a lookup. Persisting it across runs is what removes the cold
+    // start; within one run it still pays off for pipelines that differ only by blend mode.
+    void VulkanDevice::InitPipelineCache(const std::string& path) {
+        m_PipelineCachePath = path;
+
+        std::vector<char> blob;
+        if (!path.empty()) {
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (file) {
+                const auto size = file.tellg();
+                if (size > 0) {
+                    blob.resize(static_cast<size_t>(size));
+                    file.seekg(0);
+                    file.read(blob.data(), size);
+                }
+            }
+        }
+
+        VkPipelineCacheCreateInfo info{ VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+        info.initialDataSize = blob.size();
+        info.pInitialData    = blob.empty() ? nullptr : blob.data();
+
+        // A blob from another GPU, another driver version or a truncated write is rejected by
+        // the driver on its own header check, so a stale file costs a cold start and nothing
+        // worse. It is not worth validating here, and it is not worth failing over.
+        if (vkCreatePipelineCache(m_Device, &info, nullptr, &m_PipelineCache) != VK_SUCCESS) {
+            HEARTH_WARN("pipeline cache could not be created; pipelines will compile cold");
+            m_PipelineCache = VK_NULL_HANDLE;
+        }
+    }
+
+    void VulkanDevice::SavePipelineCache() {
+        if (!m_PipelineCache || m_PipelineCachePath.empty()) return;
+
+        size_t size = 0;
+        if (vkGetPipelineCacheData(m_Device, m_PipelineCache, &size, nullptr) != VK_SUCCESS || !size)
+            return;
+
+        std::vector<char> blob(size);
+        if (vkGetPipelineCacheData(m_Device, m_PipelineCache, &size, blob.data()) != VK_SUCCESS)
+            return;
+
+        std::error_code ec;
+        std::filesystem::create_directories(
+            std::filesystem::path(m_PipelineCachePath).parent_path(), ec);
+
+        // Write beside the target and rename, so a process killed mid-write leaves the
+        // previous cache intact rather than a half file the next run has to reject.
+        const std::string temp = m_PipelineCachePath + ".tmp";
+        {
+            std::ofstream file(temp, std::ios::binary | std::ios::trunc);
+            if (!file) return;
+            file.write(blob.data(), static_cast<std::streamsize>(blob.size()));
+            if (!file) return;
+        }
+        std::filesystem::rename(temp, m_PipelineCachePath, ec);
     }
 
     bool VulkanDevice::InitFrames() {
@@ -368,6 +435,8 @@ namespace hearth {
     Swapchain* VulkanDevice::GetSwapchain() { return m_Swapchain.get(); }
 
     VkSampler VulkanDevice::SamplerFor(Filter minFilter, Filter magFilter, AddressMode address) {
+        const std::scoped_lock lock(m_SamplerMutex);
+
         const u32 key = SamplerKey(minFilter, magFilter, address);
         if (auto it = m_Samplers.find(key); it != m_Samplers.end()) return it->second;
 
@@ -411,6 +480,10 @@ namespace hearth {
     }
 
     void VulkanDevice::ImmediateSubmitRaw(const std::function<void(VkCommandBuffer)>& record) {
+        // Serialised: the pool, the fence and the queue submission are all shared, and an
+        // asset loader uploading textures from several threads is the expected caller.
+        const std::scoped_lock lock(m_ImmediateMutex);
+
         VkCommandBufferAllocateInfo alloc{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
         alloc.commandPool = m_ImmediatePool;
         alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;

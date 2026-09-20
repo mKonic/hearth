@@ -31,5 +31,6 @@ namespace hearth::tests {
     void RunDeviceTests();
     void RunResourceTests();
     void RunRenderTests();
+    void RunSystemTests();
 
 }
