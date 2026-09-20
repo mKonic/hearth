@@ -12,3 +12,4 @@ outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
 include "vendor-build/VulkanDeps.lua"
 include "Hearth"
+include "Hearth-Tests"

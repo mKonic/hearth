@@ -1,6 +1,6 @@
 # hearth
 
-A Vulkan 1.3 device, resource and command-list layer. Dynamic rendering; no `VkRenderPass` or
+A Vulkan device, resource and command-list layer. Dynamic rendering; no `VkRenderPass` or
 `VkFramebuffer` objects anywhere.
 
 hearth links no windowing library. The host supplies a presentation surface by implementing
@@ -8,9 +8,22 @@ hearth links no windowing library. The host supplies a presentation surface by i
 
 ## Requirements
 
-- A Vulkan 1.3 device with `dynamicRendering`, `synchronization2` and descriptor indexing
+- A Vulkan 1.3 device or newer, with `dynamicRendering`, `synchronization2` and descriptor
+  indexing
 - The Vulkan loader (Arch: `vulkan-icd-loader`); headers, VMA and vk-bootstrap are vendored
 - A C++23 compiler, premake5
+
+## API version
+
+hearth does not target a fixed Vulkan version. At device creation it takes the lowest of what
+the loader offers, what its vendored headers describe, and what the device supports, then
+enables the newer core features that version brings. 1.3 is the floor — dynamic rendering and
+synchronization2 are core there and the whole backend is built on them.
+
+`Caps().apiVersion` is what was negotiated, and `Caps().AtLeast(1, 4)` reads it. Set
+`DeviceDesc::minimumApiVersion` to raise the floor when your own code needs a newer core
+feature, so an unsuitable machine is refused at startup with a message rather than at the
+first call into a function the driver does not have.
 
 ## Build
 
