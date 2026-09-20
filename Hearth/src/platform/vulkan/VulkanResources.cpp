@@ -202,13 +202,19 @@ namespace hearth {
             for (const auto& b : desc.bindings) {
                 bindings.push_back({ b.binding, ToVk(b.type), b.count,
                                      ToVkStageFlags(b.stages), nullptr });
-                // An array binding gets both: PARTIALLY_BOUND so it may be left half-written,
-                // and UPDATE_AFTER_BIND so a renderer that discovers a texture mid-scene can
-                // rewrite the array without waiting for every frame using it to retire.
-                flags.push_back(b.count > 1
-                    ? VkDescriptorBindingFlags{ VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
-                                              | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT }
-                    : VkDescriptorBindingFlags{ 0 });
+                // An array binding may be left half-written, so PARTIALLY_BOUND always.
+                // UPDATE_AFTER_BIND -- which is what lets a renderer that discovers a texture
+                // mid-scene rewrite the array without waiting for every frame using it to
+                // retire -- is added only for texture arrays: it is gated on a per-descriptor-
+                // type device feature, and the uniform-buffer variant is missing on enough
+                // hardware that requiring it would narrow which GPUs hearth runs on.
+                VkDescriptorBindingFlags bindingFlags = 0;
+                if (b.count > 1) {
+                    bindingFlags |= VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+                    if (b.type == BindingType::SampledTexture)
+                        bindingFlags |= VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+                }
+                flags.push_back(bindingFlags);
             }
 
             VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{

@@ -146,6 +146,12 @@ namespace hearth {
         f12.runtimeDescriptorArray = VK_TRUE;
         f12.descriptorBindingPartiallyBound = VK_TRUE;
         f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        // What makes VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT legal on a sampler array,
+        // and what makes rewriting one that is already bound legal. Only the sampled-image
+        // variants are required: the uniform-buffer one is genuinely absent on some hardware,
+        // so VulkanPipeline applies update-after-bind to texture arrays only.
+        f12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        f12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
 
         vkb::PhysicalDeviceSelector selector{ instance };
         selector.set_minimum_version(floor)
@@ -206,6 +212,7 @@ namespace hearth {
         m_Caps.validationActive = m_Validation;
         m_Caps.hostImageCopy  = optional.hostImageCopy;
         m_Caps.pushDescriptor = optional.pushDescriptor;
+        m_Caps.maintenance5   = optional.maintenance5;
         m_Caps.driverInfo     = "Vulkan " + DescribeOptional(m_ApiVersion, optional);
 
         HEARTH_INFO("{} ({}){}, {}", m_Caps.deviceName,

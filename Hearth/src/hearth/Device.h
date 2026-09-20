@@ -32,6 +32,7 @@ namespace hearth {
         // on them; hearth does not yet route any of its own work through them.
         bool hostImageCopy = false;
         bool pushDescriptor = false;
+        bool maintenance5 = false;
 
         // Whether the validation layers are actually loaded -- not merely whether they were
         // asked for. They are a request, and a machine without them installed builds the
@@ -64,9 +65,9 @@ namespace hearth {
         bool enableValidation = true;
 #endif
 
-        // Raise hearth's 1.3 floor when YOUR code needs a newer core feature, so the refusal
-        // happens at device creation with a clear message rather than at the first call into
-        // a function the driver does not have. 0 leaves hearth's own floor in place.
+        // Raise hearth's 1.3 floor when your own code needs a newer core feature. A packed
+        // Vulkan version, so VK_API_VERSION_1_4 rather than 4 or 14; 0 leaves hearth's floor
+        // in place. CreateDevice returns null and logs the reason when it cannot be met.
         u32 minimumApiVersion = 0;
         bool vsync = true;
         std::string appName = "hearth";

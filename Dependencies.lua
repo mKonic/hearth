@@ -19,4 +19,6 @@ IncludeDir["VMA"]           = HearthRoot .. "/vendor/VulkanMemoryAllocator/inclu
 IncludeDir["vkbootstrap"]   = HearthRoot .. "/vendor/vk-bootstrap/src"
 
 Library = Library or {}
-Library["Vulkan"] = "vulkan"    -- Linux loader; "vulkan-1" on Windows
+-- The loader is named differently per system, and this table is read at script time rather
+-- than inside a premake filter, so the choice is made here.
+Library["Vulkan"] = os.target() == "windows" and "vulkan-1" or "vulkan"
