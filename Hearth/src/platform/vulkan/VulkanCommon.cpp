@@ -195,3 +195,31 @@ namespace hearth {
     }
 
 }
+
+namespace hearth {
+
+    namespace {
+        // Resolved once per device. Null when the loader has no debug-utils, which is what a
+        // machine with no validation layers installed looks like.
+        PFN_vkSetDebugUtilsObjectNameEXT s_SetName = nullptr;
+        VkDevice s_NamedDevice = VK_NULL_HANDLE;
+    }
+
+    void SetObjectName(VkDevice device, VkObjectType type, u64 handle, const std::string& name) {
+        if (name.empty() || handle == 0) return;
+
+        if (device != s_NamedDevice) {
+            s_SetName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+                vkGetDeviceProcAddr(device, "vkSetDebugUtilsObjectNameEXT"));
+            s_NamedDevice = device;
+        }
+        if (!s_SetName) return;
+
+        VkDebugUtilsObjectNameInfoEXT info{ VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT };
+        info.objectType   = type;
+        info.objectHandle = handle;
+        info.pObjectName  = name.c_str();
+        s_SetName(device, &info);
+    }
+
+}

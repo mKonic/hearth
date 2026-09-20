@@ -33,6 +33,11 @@ namespace hearth {
         bool hostImageCopy = false;
         bool pushDescriptor = false;
 
+        // Whether the validation layers are actually loaded -- not merely whether they were
+        // asked for. They are a request, and a machine without them installed builds the
+        // instance happily without them.
+        bool validationActive = false;
+
         // `Caps().AtLeast(1, 4)` reads better at a call site than a packed comparison.
         bool AtLeast(u32 major, u32 minor) const {
             return apiVersion >= ((major << 22) | (minor << 12));

@@ -65,6 +65,20 @@ namespace hearth {
     bool VulkanDevice::InitVulkan(const DeviceDesc& desc) {
         m_Validation = desc.enableValidation;
 
+        // `request_validation_layers` is a request, not a requirement: when the layers are not
+        // installed vk-bootstrap quietly builds the instance without them and succeeds. Asking
+        // the system first is the only way to tell the difference, and the difference matters
+        // -- "validation on" in the log when nothing is validating is worse than no message,
+        // because it is the line someone reads before concluding their code is clean.
+        if (m_Validation) {
+            auto systemInfo = vkb::SystemInfo::get_system_info();
+            if (!systemInfo || !systemInfo->validation_layers_available) {
+                HEARTH_WARN("validation was requested but the layers are not installed "
+                            "(Arch: vulkan-validationlayers); continuing without them");
+                m_Validation = false;
+            }
+        }
+
         const u32 instanceVersion = NegotiateInstanceVersion();
         if (instanceVersion == 0) return false;   // already reported, with the reason
 
@@ -188,7 +202,8 @@ namespace hearth {
         m_Caps.maxTexturesPerBindGroup =
             std::max(indexing.maxDescriptorSetUpdateAfterBindSampledImages,
                      props.limits.maxPerStageDescriptorSampledImages);
-        m_Caps.apiVersion     = m_ApiVersion;
+        m_Caps.apiVersion       = m_ApiVersion;
+        m_Caps.validationActive = m_Validation;
         m_Caps.hostImageCopy  = optional.hostImageCopy;
         m_Caps.pushDescriptor = optional.pushDescriptor;
         m_Caps.driverInfo     = "Vulkan " + DescribeOptional(m_ApiVersion, optional);
@@ -348,6 +363,13 @@ namespace hearth {
 
         VkSampler sampler = VK_NULL_HANDLE;
         HEARTH_VK_CHECK(vkCreateSampler(m_Device, &info, nullptr, &sampler));
+        // Shared between every texture with these settings, so it is named for the settings
+        // rather than for whichever texture happened to ask for it first.
+        SetObjectName(m_Device, sampler,
+                      std::format("sampler({}/{}/{})",
+                                  minFilter == Filter::Nearest ? "nearest" : "linear",
+                                  magFilter == Filter::Nearest ? "nearest" : "linear",
+                                  static_cast<int>(address)));
         m_Samplers.emplace(key, sampler);
         return sampler;
     }

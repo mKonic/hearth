@@ -45,6 +45,7 @@ namespace hearth {
         HEARTH_VK_CHECK(vmaCreateBuffer(m_Device.Allocator(), &info, &alloc,
                                         &m_Buffer, &m_Allocation, &allocInfo));
         m_Mapped = allocInfo.pMappedData;
+        SetObjectName(m_Device.Raw(), m_Buffer, desc.debugName);
     }
 
     VulkanBuffer::~VulkanBuffer() {
@@ -113,6 +114,9 @@ namespace hearth {
 
         if (!depth)
             m_Sampler = m_Device.SamplerFor(desc.minFilter, desc.magFilter, desc.addressMode);
+
+        SetObjectName(m_Device.Raw(), m_Image, desc.debugName);
+        SetObjectName(m_Device.Raw(), m_View, desc.debugName + ".view");
     }
 
     VulkanTexture::VulkanTexture(VulkanDevice& device, const TextureDesc& desc,
@@ -177,6 +181,7 @@ namespace hearth {
         info.codeSize = desc.spirv.size() * sizeof(u32);
         info.pCode    = desc.spirv.data();
         HEARTH_VK_CHECK(vkCreateShaderModule(m_Device.Raw(), &info, nullptr, &m_Module));
+        SetObjectName(m_Device.Raw(), m_Module, desc.debugName);
     }
 
     VulkanShader::~VulkanShader() {
@@ -334,6 +339,8 @@ namespace hearth {
         info.layout = m_Layout;
         HEARTH_VK_CHECK(vkCreateGraphicsPipelines(m_Device.Raw(), VK_NULL_HANDLE, 1, &info,
                                                   nullptr, &m_Pipeline));
+        SetObjectName(m_Device.Raw(), m_Pipeline, desc.debugName);
+        SetObjectName(m_Device.Raw(), m_Layout, desc.debugName + ".layout");
     }
 
     VulkanPipeline::~VulkanPipeline() {
@@ -354,6 +361,7 @@ namespace hearth {
 
         m_Allocation = m_Device.AllocateDescriptorSet(vkPipeline->SetLayout());
         m_Set = m_Allocation.set;
+        SetObjectName(m_Device.Raw(), m_Set, vkPipeline->Desc().debugName + ".bindgroup");
 
         Update(entries);
     }

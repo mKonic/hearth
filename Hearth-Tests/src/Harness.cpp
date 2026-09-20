@@ -86,6 +86,13 @@ int main() {
     RunResourceTests();
     RunRenderTests();
 
-    std::printf("\n%d checks, %d failed\n", Tally().checks, Tally().failed);
+    // A green run means much less without the validation layers: most of what this suite is
+    // positioned to catch -- bad barriers, unwritten descriptors, layout mismatches -- is
+    // reported by them and not by a pixel comparison. Say which kind of run this was rather
+    // than letting "0 failed" imply the stronger one.
+    std::printf("\n%d checks, %d failed%s\n", Tally().checks, Tally().failed,
+                Gpu().Caps().validationActive
+                    ? ""
+                    : "  (validation layers absent -- install them for a full run)");
     return Tally().failed == 0 ? 0 : 1;
 }
