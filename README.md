@@ -21,11 +21,11 @@ make config=debug -j4
 
 ## Using it
 
-Add hearth as a submodule, point `HearthRoot` at it, and include its projects:
+Add hearth as a submodule and include its projects. `Dependencies.lua` works out where hearth
+is and sets `HearthRoot`, `IncludeDir` and `Library` from that, so the path appears once:
 
 ```lua
-HearthRoot = "%{wks.location}/vendor/hearth"
-include (HearthRoot .. "/Dependencies.lua")
+include "vendor/hearth/Dependencies.lua"
 include (HearthRoot .. "/vendor-build/VulkanDeps.lua")
 include (HearthRoot .. "/Hearth")
 ```

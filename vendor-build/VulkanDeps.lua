@@ -6,6 +6,11 @@
 local outputdir = outputdir or "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
 project "VulkanDeps"
+   -- Without this the project would generate into the CONSUMING workspace's directory, and
+   -- every relative path in `files` below would resolve against that instead of against
+   -- hearth. Pin it to this script's own folder so hearth builds the same wherever it is
+   -- vendored.
+   location (_SCRIPT_DIR)
    kind "StaticLib"
    language "C++"
    cppdialect "C++20"
@@ -13,9 +18,9 @@ project "VulkanDeps"
    objdir    ("%{wks.location}/bin-int/" .. outputdir .. "/%{prj.name}")
 
    files {
-      HearthRoot .. "/vendor/vk-bootstrap/src/VkBootstrap.cpp",
-      HearthRoot .. "/vendor/vk-bootstrap/src/VkBootstrap.h",
-      HearthRoot .. "/vendor-build/src/vk_mem_alloc_impl.cpp",
+      "../vendor/vk-bootstrap/src/VkBootstrap.cpp",
+      "../vendor/vk-bootstrap/src/VkBootstrap.h",
+      "src/vk_mem_alloc_impl.cpp",
    }
 
    includedirs {

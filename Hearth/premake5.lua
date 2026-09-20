@@ -2,6 +2,11 @@
 local outputdir = outputdir or "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
 project "Hearth"
+   -- Without this the project would generate into the CONSUMING workspace's directory, and
+   -- every relative path in `files` below would resolve against that instead of against
+   -- hearth. Pin it to this script's own folder so hearth builds the same wherever it is
+   -- vendored.
+   location (_SCRIPT_DIR)
    kind "StaticLib"
    language "C++"
    cppdialect "C++23"
@@ -15,13 +20,13 @@ project "Hearth"
    objdir    ("%{wks.location}/bin-int/" .. outputdir .. "/%{prj.name}")
 
    files {
-      HearthRoot .. "/Hearth/src/**.h",
-      HearthRoot .. "/Hearth/src/**.cpp",
+      "src/**.h",
+      "src/**.cpp",
    }
 
    -- The surface adapters are header-only and include GLFW/SDL/Android headers hearth does not
    -- have on its own include path. A consumer includes the one it wants from its own code.
-   removefiles { HearthRoot .. "/Hearth/src/hearth/surface/**" }
+   removefiles { "src/hearth/surface/**" }
 
    includedirs {
       "%{IncludeDir.Hearth}",

@@ -7,7 +7,10 @@
 -- Nothing windowing-related appears here on purpose. hearth links no window library; see
 -- Hearth/src/hearth/Surface.h.
 
-HearthRoot = HearthRoot or "%{wks.location}"
+-- Absolute, and worked out from where this file actually is. A consumer that vendored hearth
+-- at some other depth does not have to tell it so, and these paths stay valid no matter which
+-- workspace is including them.
+HearthRoot = _SCRIPT_DIR
 
 IncludeDir = IncludeDir or {}
 IncludeDir["Hearth"]        = HearthRoot .. "/Hearth/src"
