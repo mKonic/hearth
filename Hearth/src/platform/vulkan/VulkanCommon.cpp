@@ -200,27 +200,30 @@ namespace hearth {
 namespace hearth {
 
     namespace {
-        // Resolved once per device. Null when the loader has no debug-utils, which is what a
-        // machine with no validation layers installed looks like.
-        PFN_vkSetDebugUtilsObjectNameEXT s_SetName = nullptr;
-        VkDevice s_NamedDevice = VK_NULL_HANDLE;
+        // Resolved once per device, per thread. Resource creation is documented as safe from
+        // several threads, and every Create* with a debugName lands here -- a plain file-scope
+        // cache would be a data race on the pair. thread_local keeps the lookup cheap without
+        // a lock; resolving it once more per thread costs nothing.
+        thread_local PFN_vkSetDebugUtilsObjectNameEXT t_SetName = nullptr;
+        thread_local VkDevice t_NamedDevice = VK_NULL_HANDLE;
     }
 
     void SetObjectName(VkDevice device, VkObjectType type, u64 handle, const std::string& name) {
         if (name.empty() || handle == 0) return;
 
-        if (device != s_NamedDevice) {
-            s_SetName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+        if (device != t_NamedDevice) {
+            t_SetName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
                 vkGetDeviceProcAddr(device, "vkSetDebugUtilsObjectNameEXT"));
-            s_NamedDevice = device;
+            t_NamedDevice = device;
         }
-        if (!s_SetName) return;
+        const auto setName = t_SetName;
+        if (!setName) return;
 
         VkDebugUtilsObjectNameInfoEXT info{ VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT };
         info.objectType   = type;
         info.objectHandle = handle;
         info.pObjectName  = name.c_str();
-        s_SetName(device, &info);
+        setName(device, &info);
     }
 
 }

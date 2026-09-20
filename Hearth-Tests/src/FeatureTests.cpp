@@ -176,6 +176,30 @@ void RunFeatureTests() {
         absurd.debugName = "msaa-clamped";
         auto clamped = gpu.CreateRenderTarget(absurd);
         CHECK(clamped != nullptr);
+
+        // VkSampleCountFlagBits is a BITMASK: 3 is not "three samples", it is samples 1 and 2
+        // at once, and casting a non-power-of-two straight through produces an invalid enum
+        // the driver is entitled to reject. Every odd count must land on a real one.
+        for (u32 odd : { 3u, 5u, 6u, 7u, 100u }) {
+            RenderTargetDesc weird = targetDesc;
+            weird.samples = odd;
+            weird.debugName = std::format("msaa-{}", odd);
+            auto target2 = gpu.CreateRenderTarget(weird);
+            CHECK_MSG(target2 != nullptr, "{} samples produced no target", odd);
+
+            // Rendering into it is what actually exercises the enum.
+            gpu.SubmitImmediate([&](CommandList& cmd) {
+                cmd.BeginRenderPass(RenderPassDesc{
+                    .target = target2.get(), .loadOp = LoadOp::Clear,
+                    .clearColor = { 0.0f, 1.0f, 0.0f, 1.0f } });
+                cmd.EndRenderPass();
+            });
+            std::vector<u8> out(16 * 16 * 4);
+            target2->ReadPixels(out.data(), out.size());
+            const u8* p = &out[(8 * 16 + 8) * 4];
+            CHECK_MSG(p[1] > 250, "{} samples cleared to ({},{},{}), expected green",
+                      odd, p[0], p[1], p[2]);
+        }
     }
 
     Section("multiple render targets");

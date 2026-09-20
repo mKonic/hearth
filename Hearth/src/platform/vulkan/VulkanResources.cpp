@@ -105,8 +105,13 @@ namespace hearth {
                       desc.debugName, desc.layers);
 
         // A mip chain is built by blitting each level from the one above, so an image that
-        // cannot be a transfer source cannot have one.
-        m_MipLevels = (desc.generateMipmaps && !depth && desc.usage != TextureUsage::Storage)
+        // cannot be a transfer source cannot have one. Say so rather than quietly handing
+        // back a single-level texture the caller believes is mipped.
+        const bool mippable = !depth && desc.usage != TextureUsage::Storage;
+        if (desc.generateMipmaps && !mippable)
+            HEARTH_WARN("texture '{}' asked for mipmaps, which a {} texture cannot have",
+                        desc.debugName, depth ? "depth" : "storage");
+        m_MipLevels = (desc.generateMipmaps && mippable)
                     ? FullMipChain(desc.width, desc.height)
                     : 1;
 
@@ -650,11 +655,15 @@ namespace hearth {
                       device.Caps().maxColorAttachments);
 
         // Clamped rather than refused: a target asking for 8x on hardware that does 4x should
-        // render at 4x, not fail to exist.
+        // render at 4x, not fail to exist. Rounded down to a power of two first, because
+        // VkSampleCountFlagBits is a bitmask -- 3 is not a sample count, it is samples 1 and
+        // 2 at once, and casting it straight through produces an invalid enum.
         const u32 requested = m_Desc.samples ? m_Desc.samples : 1;
-        m_Desc.samples = std::min(requested, device.Caps().maxSamples);
+        u32 samples = std::min(requested, device.Caps().maxSamples);
+        while (samples > 1 && (samples & (samples - 1)) != 0) --samples;
+        m_Desc.samples = samples;
         if (m_Desc.samples != requested)
-            HEARTH_WARN("render target '{}' asked for {}x MSAA; this device offers {}x",
+            HEARTH_WARN("render target '{}' asked for {}x MSAA; using {}x",
                         m_Desc.debugName, requested, m_Desc.samples);
         m_Samples = static_cast<VkSampleCountFlagBits>(m_Desc.samples);
 
