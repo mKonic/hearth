@@ -137,6 +137,17 @@ namespace hearth {
         VkPhysicalDeviceVulkan13Features f13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         f13.dynamicRendering = VK_TRUE;
         f13.synchronization2 = VK_TRUE;
+        // Every one of these is a feature a Vulkan 1.3 device is REQUIRED by the spec to
+        // support, so asking for them narrows nothing. They are enabled because a shader that
+        // declares the matching SPIR-V capability -- which glslc emits for `discard` on its
+        // own -- fails vkCreateShaderModule if the feature was not switched on, and the error
+        // names the capability rather than the line of GLSL that caused it.
+        f13.shaderDemoteToHelperInvocation     = VK_TRUE;
+        f13.shaderTerminateInvocation          = VK_TRUE;
+        f13.shaderZeroInitializeWorkgroupMemory = VK_TRUE;
+        f13.subgroupSizeControl                = VK_TRUE;
+        f13.computeFullSubgroups               = VK_TRUE;
+        f13.maintenance4                       = VK_TRUE;
 
         // Descriptor indexing is what lets one draw address many textures -- a sprite batch, a
         // glyph atlas spread over several pages. partiallyBound is what makes an array binding

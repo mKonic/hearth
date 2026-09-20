@@ -234,6 +234,50 @@ void RunRenderTests() {
         CheckPixel(At(pixels, 8, 4, 4), 255, 255, 0, 255, 1, "u16 indexed quad");
     }
 
+    Section("shader capabilities");
+
+    {
+        // A fragment shader using `discard`. glslc emits the DemoteToHelperInvocation SPIR-V
+        // capability for it, and creating the module fails outright unless the matching 1.3
+        // device feature was enabled -- which is a whole class of bug a pixel comparison
+        // cannot see, because there is no image to compare.
+        PipelineDesc desc;
+        desc.vertex   = FlatVert();
+        desc.fragment = Gpu().CreateShader(ShaderDesc{
+            .spirv = std::vector<u32>(std::begin(kDiscardFrag), std::end(kDiscardFrag)),
+            .stage = ShaderStage::Fragment, .debugName = "discard.frag" });
+        desc.vertexBuffers = { VertexBufferLayout{
+            .stride = sizeof(FlatVertex),
+            .attributes = {
+                { 0, Format::RG32_SFLOAT,   offsetof(FlatVertex, x) },
+                { 1, Format::RGBA32_SFLOAT, offsetof(FlatVertex, r) },
+            } } };
+        desc.pushConstantSize = sizeof(FlatPush);
+        desc.blend       = BlendMode::None;
+        desc.colorFormat = Format::RGBA8_UNORM;
+        desc.debugName   = "discard";
+        auto pipeline = Gpu().CreatePipeline(desc);
+        CHECK(pipeline != nullptr);
+
+        // Alpha below the shader's threshold: every fragment is discarded and the clear
+        // survives. Above it, the quad is drawn.
+        auto transparent = FullQuad(0.0f, 1.0f, 0.0f, 0.25f);
+        auto opaque      = FullQuad(0.0f, 1.0f, 0.0f, 1.0f);
+
+        auto draw = [&](const Ref<Buffer>& quad) {
+            return RenderToPixels(4, 4, Color{ 1.0f, 0.0f, 0.0f, 1.0f },
+                                  [&](CommandList& cmd) {
+                cmd.BindPipeline(pipeline);
+                cmd.BindVertexBuffer(0, quad);
+                const FlatPush push;
+                cmd.SetPushConstants(&push, sizeof(push));
+                cmd.Draw(6);
+            });
+        };
+        CheckPixel(At(draw(transparent), 4, 2, 2), 255, 0, 0, 255, 1, "discarded, clear survives");
+        CheckPixel(At(draw(opaque), 4, 2, 2), 0, 255, 0, 255, 1, "kept, quad drawn");
+    }
+
     Section("texture bindings");
 
     {
