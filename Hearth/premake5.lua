@@ -1,3 +1,6 @@
+-- The consuming workspace may or may not define `outputdir`; do not require it to.
+local outputdir = outputdir or "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
+
 project "Hearth"
    kind "StaticLib"
    language "C++"
@@ -27,7 +30,7 @@ project "Hearth"
       "%{IncludeDir.vkbootstrap}",
    }
 
-   links { "VulkanDeps" }
+   links { "VulkanDeps", "%{Library.Vulkan}" }
 
    filter "system:linux"
       pic "On"

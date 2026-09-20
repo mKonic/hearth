@@ -2,6 +2,9 @@
 --
 -- They are third-party and warn heavily under the flags hearth builds its own code with, so
 -- isolating them keeps hearth's build output readable. A consumer links this alongside Hearth.
+-- The consuming workspace may or may not define `outputdir`; do not require it to.
+local outputdir = outputdir or "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
+
 project "VulkanDeps"
    kind "StaticLib"
    language "C++"
