@@ -542,13 +542,10 @@ namespace hearth {
         record(cmd);
         HEARTH_VK_CHECK(vkEndCommandBuffer(cmd));
 
-        VkCommandBufferSubmitInfo cmdInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
-        cmdInfo.commandBuffer = cmd;
-        VkSubmitInfo2 submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
-        submit.commandBufferInfoCount = 1;
-        submit.pCommandBufferInfos = &cmdInfo;
-
-        HEARTH_VK_CHECK(vkQueueSubmit2(m_GraphicsQueue, 1, &submit, m_ImmediateFence));
+        VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cmd;
+        HEARTH_VK_CHECK(vkQueueSubmit(m_GraphicsQueue, 1, &submit, m_ImmediateFence));
         HEARTH_VK_CHECK(vkWaitForFences(m_Device, 1, &m_ImmediateFence, VK_TRUE, UINT64_MAX));
         HEARTH_VK_CHECK(vkResetFences(m_Device, 1, &m_ImmediateFence));
         vkFreeCommandBuffers(m_Device, m_ImmediatePool, 1, &cmd);
@@ -618,49 +615,34 @@ namespace hearth {
             const VkImageLayout from = m_CommandList->TouchedSwapchain()
                                      ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
                                      : VK_IMAGE_LAYOUT_UNDEFINED;
-            VkImageMemoryBarrier2 b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
-            b.srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-            b.dstStageMask  = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
-            b.oldLayout = from;
-            b.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.image = m_Swapchain->Image(m_ImageIndex);
-            b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-            VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-            dep.imageMemoryBarrierCount = 1;
-            dep.pImageMemoryBarriers = &b;
-            vkCmdPipelineBarrier2(frame.cmd, &dep);
+            ImageBarrier(frame.cmd, m_Swapchain->Image(m_ImageIndex), from,
+                         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
+                         VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
         }
 
         HEARTH_VK_CHECK(vkEndCommandBuffer(frame.cmd));
         m_CommandList->End();
 
-        VkCommandBufferSubmitInfo cmdInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
-        cmdInfo.commandBuffer = frame.cmd;
-
-        VkSemaphoreSubmitInfo wait{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
-        wait.semaphore = frame.imageAvailable;
-        wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-        VkSemaphoreSubmitInfo signal{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
-        if (m_Swapchain) signal.semaphore = m_Swapchain->RenderFinished(m_ImageIndex);
-        signal.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
-
-        VkSubmitInfo2 submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
-        submit.commandBufferInfoCount = 1;
-        submit.pCommandBufferInfos = &cmdInfo;
+        const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        VkSemaphore renderFinished = m_Swapchain ? m_Swapchain->RenderFinished(m_ImageIndex)
+                                                 : VK_NULL_HANDLE;
+        VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &frame.cmd;
         if (m_Swapchain) {
-            submit.waitSemaphoreInfoCount = 1;
-            submit.pWaitSemaphoreInfos = &wait;
-            submit.signalSemaphoreInfoCount = 1;
-            submit.pSignalSemaphoreInfos = &signal;
+            submit.waitSemaphoreCount = 1;
+            submit.pWaitSemaphores = &frame.imageAvailable;
+            submit.pWaitDstStageMask = &waitStage;
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &renderFinished;
         }
-        HEARTH_VK_CHECK(vkQueueSubmit2(m_GraphicsQueue, 1, &submit, frame.inFlight));
+        HEARTH_VK_CHECK(vkQueueSubmit(m_GraphicsQueue, 1, &submit, frame.inFlight));
 
         if (m_Swapchain) {
             VkSwapchainKHR chain = m_Swapchain->Raw();
-            VkSemaphore renderFinished = m_Swapchain->RenderFinished(m_ImageIndex);
             VkPresentInfoKHR present{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
             present.waitSemaphoreCount = 1;
             present.pWaitSemaphores = &renderFinished;

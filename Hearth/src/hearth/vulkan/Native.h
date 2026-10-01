@@ -51,7 +51,7 @@ namespace hearth::vk {
     VkPipelineLayout RawLayout(Pipeline& pipeline);
     VkDescriptorSet Raw(BindGroup& group);
 
-    // A sync2 layout transition with conservative stage/access masks. Coarser than a hand-tuned
+    // A layout transition with conservative stage/access masks. Coarser than a hand-tuned
     // barrier and correct everywhere; three separate copies of exactly this function are what
     // started this library.
     void TransitionImage(VkCommandBuffer cmd, VkImage image,

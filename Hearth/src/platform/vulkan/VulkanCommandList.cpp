@@ -24,21 +24,11 @@ namespace hearth {
     }
 
     void VulkanCommandList::Barrier(VkImage image, VkImageLayout from, VkImageLayout to,
-                                    VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
-                                    VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
+                                    VkPipelineStageFlags srcStage, VkAccessFlags srcAccess,
+                                    VkPipelineStageFlags dstStage, VkAccessFlags dstAccess,
                                     VkImageAspectFlags aspect) {
-        VkImageMemoryBarrier2 b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
-        b.srcStageMask = srcStage; b.srcAccessMask = srcAccess;
-        b.dstStageMask = dstStage; b.dstAccessMask = dstAccess;
-        b.oldLayout = from; b.newLayout = to;
-        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = image;
-        b.subresourceRange = { aspect, 0, 1, 0, 1 };
-
-        VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &b;
-        vkCmdPipelineBarrier2(m_Cmd, &dep);
+        ImageBarrier(m_Cmd, image, from, to, srcStage, srcAccess, dstStage, dstAccess,
+                     VkImageSubresourceRange{ aspect, 0, 1, 0, 1 });
     }
 
     void VulkanCommandList::BeginRenderPass(const RenderPassDesc& desc) {
@@ -69,9 +59,9 @@ namespace hearth {
                     m_CurrentTarget->ColorTexture(i).get());
                 Barrier(color->Image(), color->Layout(),
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
-                        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
                 color->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
                 // The multisampled image needs the same transition, and it is a separate
@@ -81,9 +71,9 @@ namespace hearth {
                 if (VkImage msaa = m_CurrentTarget->ColorImage(i); msaa != color->Image()) {
                     Barrier(msaa, VK_IMAGE_LAYOUT_UNDEFINED,
                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
+                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
                 }
 
                 VkRenderingAttachmentInfo attachment{
@@ -111,12 +101,12 @@ namespace hearth {
             if (depthView) {
                 Barrier(m_CurrentTarget->DepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                        VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
-                            | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                            | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                            | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                            | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                         VK_IMAGE_ASPECT_DEPTH_BIT);
             }
             width     = m_CurrentTarget->Width();
@@ -130,9 +120,9 @@ namespace hearth {
             if (!m_TouchedSwapchain) {
                 Barrier(swapchain->Image(m_ImageIndex), VK_IMAGE_LAYOUT_UNDEFINED,
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                        VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
                 m_TouchedSwapchain = true;
             }
 
@@ -186,9 +176,9 @@ namespace hearth {
                     m_CurrentTarget->ColorTexture(i).get());
                 Barrier(color->Image(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
                 color->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
         }
@@ -280,16 +270,12 @@ namespace hearth {
     // on the machine it was written on. hearth/vulkan/Native.h is there for anyone who has
     // measured this and wants the precise masks.
     void VulkanCommandList::FullBarrier() {
-        VkMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-        barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        barrier.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-
-        VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-        dep.memoryBarrierCount = 1;
-        dep.pMemoryBarriers    = &barrier;
-        vkCmdPipelineBarrier2(m_Cmd, &dep);
+        VkMemoryBarrier barrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(m_Cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr,
+                             0, nullptr);
     }
 
 }

@@ -201,25 +201,30 @@ namespace hearth {
         return VK_COMPARE_OP_LESS_OR_EQUAL;
     }
 
-    void TransitionImageRaw(VkCommandBuffer cmd, VkImage image,
-                            VkImageLayout from, VkImageLayout to,
-                            VkImageAspectFlags aspect) {
-        VkImageMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
-        barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        barrier.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+    void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
+                      VkPipelineStageFlags srcStage, VkAccessFlags srcAccess,
+                      VkPipelineStageFlags dstStage, VkAccessFlags dstAccess,
+                      const VkImageSubresourceRange& range) {
+        VkImageMemoryBarrier barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+        barrier.srcAccessMask = srcAccess;
+        barrier.dstAccessMask = dstAccess;
         barrier.oldLayout = from;
         barrier.newLayout = to;
         barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = image;
-        barrier.subresourceRange = VkImageSubresourceRange{
-            aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
+        barrier.subresourceRange = range;
+        vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
 
-        VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(cmd, &dep);
+    void TransitionImageRaw(VkCommandBuffer cmd, VkImage image,
+                            VkImageLayout from, VkImageLayout to,
+                            VkImageAspectFlags aspect) {
+        ImageBarrier(cmd, image, from, to,
+                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
+                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                     VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT,
+                     VkImageSubresourceRange{ aspect, 0, VK_REMAINING_MIP_LEVELS,
+                                              0, VK_REMAINING_ARRAY_LAYERS });
     }
 
 }

@@ -41,6 +41,13 @@ namespace hearth {
                             VkImageLayout from, VkImageLayout to,
                             VkImageAspectFlags aspect);
 
+    // One image barrier. Core 1.0 barriers rather than synchronization2: hearth needs nothing
+    // sync2 adds, and leaving it out is one less feature between hearth and an older driver.
+    void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
+                      VkPipelineStageFlags srcStage, VkAccessFlags srcAccess,
+                      VkPipelineStageFlags dstStage, VkAccessFlags dstAccess,
+                      const VkImageSubresourceRange& range);
+
     // Attaches a debugName to a Vulkan handle, so validation messages, RenderDoc captures and
     // device-lost reports name the object instead of printing a number. A no-op when the
     // debug-utils extension is absent, which is the normal case in a shipped build -- so this

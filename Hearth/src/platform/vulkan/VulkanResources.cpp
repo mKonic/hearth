@@ -282,20 +282,11 @@ namespace hearth {
     // for level N+1, so it must have finished being written before the next blit reads it.
     void VulkanTexture::GenerateMips(VkCommandBuffer cmd, u32 layer) {
         auto barrier = [&](u32 level, VkImageLayout from, VkImageLayout to) {
-            VkImageMemoryBarrier2 b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
-            b.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-            b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-            b.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-            b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-            b.oldLayout = from;
-            b.newLayout = to;
-            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.image = m_Image;
-            b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, level, 1, layer, 1 };
-            VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-            dep.imageMemoryBarrierCount = 1;
-            dep.pImageMemoryBarriers = &b;
-            vkCmdPipelineBarrier2(cmd, &dep);
+            ImageBarrier(cmd, m_Image, from, to,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                         VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, level, 1, layer, 1 });
         };
 
         i32 width  = static_cast<i32>(m_Desc.width);
@@ -309,21 +300,14 @@ namespace hearth {
             const i32 nextWidth  = width  > 1 ? width  / 2 : 1;
             const i32 nextHeight = height > 1 ? height / 2 : 1;
 
-            VkImageBlit2 blit{ VK_STRUCTURE_TYPE_IMAGE_BLIT_2 };
+            VkImageBlit blit{};
             blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level - 1, layer, 1 };
             blit.srcOffsets[1]  = { width, height, 1 };
             blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, layer, 1 };
             blit.dstOffsets[1]  = { nextWidth, nextHeight, 1 };
-
-            VkBlitImageInfo2 info{ VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2 };
-            info.srcImage       = m_Image;
-            info.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            info.dstImage       = m_Image;
-            info.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            info.regionCount    = 1;
-            info.pRegions       = &blit;
-            info.filter         = VK_FILTER_LINEAR;
-            vkCmdBlitImage2(cmd, &info);
+            vkCmdBlitImage(cmd, m_Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                           VK_FILTER_LINEAR);
 
             width  = nextWidth;
             height = nextHeight;

@@ -43,8 +43,8 @@ namespace hearth {
 
     private:
         void Barrier(VkImage image, VkImageLayout from, VkImageLayout to,
-                     VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
-                     VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
+                     VkPipelineStageFlags srcStage, VkAccessFlags srcAccess,
+                     VkPipelineStageFlags dstStage, VkAccessFlags dstAccess,
                      VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
         VulkanDevice&   m_Device;
