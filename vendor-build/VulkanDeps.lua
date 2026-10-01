@@ -23,7 +23,8 @@ project "VulkanDeps"
       "src/vk_mem_alloc_impl.cpp",
    }
 
-   includedirs {
+   -- As system headers: this project is only third-party code, and its warnings are not ours.
+   externalincludedirs {
       "%{IncludeDir.VulkanHeaders}",
       "%{IncludeDir.VMA}",
       "%{IncludeDir.vkbootstrap}",

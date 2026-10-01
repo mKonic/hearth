@@ -28,8 +28,10 @@ project "Hearth"
    -- have on its own include path. A consumer includes the one it wants from its own code.
    removefiles { "src/hearth/surface/**" }
 
-   includedirs {
-      "%{IncludeDir.Hearth}",
+   includedirs { "%{IncludeDir.Hearth}" }
+   -- Third-party headers as system headers, so their warnings (VMA's nullability ones under
+   -- the NDK's clang) do not bury hearth's own.
+   externalincludedirs {
       "%{IncludeDir.VulkanHeaders}",
       "%{IncludeDir.VMA}",
       "%{IncludeDir.vkbootstrap}",
