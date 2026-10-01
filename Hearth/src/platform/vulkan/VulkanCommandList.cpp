@@ -145,14 +145,46 @@ namespace hearth {
         depth.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
         depth.clearValue.depthStencil = { desc.clearDepth, 0 };
 
-        VkRenderingInfo info{ VK_STRUCTURE_TYPE_RENDERING_INFO };
-        info.renderArea = { {0, 0}, { width, height } };
-        info.layerCount = 1;
-        info.colorAttachmentCount = static_cast<u32>(colorAttachments.size());
-        info.pColorAttachments = colorAttachments.data();
-        info.pDepthAttachment = depthView ? &depth : nullptr;
+        if (m_Device.Caps().dynamicRendering) {
+            VkRenderingInfo info{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+            info.renderArea = { {0, 0}, { width, height } };
+            info.layerCount = 1;
+            info.colorAttachmentCount = static_cast<u32>(colorAttachments.size());
+            info.pColorAttachments = colorAttachments.data();
+            info.pDepthAttachment = depthView ? &depth : nullptr;
+            m_Device.Rendering().begin(m_Cmd, &info);
+        } else {
+            // The same attachments as a classic render pass: colours, their resolve targets
+            // when multisampled, then depth -- the order RenderPassFor lays them out in.
+            std::vector<VkFormat> formats;
+            VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+            u32 samples = 1;
+            VkFramebuffer framebuffer = VK_NULL_HANDLE;
+            if (m_CurrentTarget) {
+                for (Format f : m_CurrentTarget->Desc().colorFormats) formats.push_back(ToVk(f));
+                depthFormat = ToVk(m_CurrentTarget->Desc().depthFormat);
+                samples = m_CurrentTarget->Desc().samples;
+                framebuffer = m_CurrentTarget->Framebuffer();
+            } else {
+                auto* swapchain = m_Device.SwapchainImpl();
+                formats = { swapchain->VkColorFormat() };
+                framebuffer = swapchain->Framebuffer(m_ImageIndex);
+            }
 
-        vkCmdBeginRendering(m_Cmd, &info);
+            std::vector<VkClearValue> clears(formats.size() * (samples > 1 ? 2 : 1)
+                                             + (depthFormat != VK_FORMAT_UNDEFINED ? 1 : 0));
+            for (size_t i = 0; i < formats.size(); ++i) clears[i].color = clear;
+            if (depthFormat != VK_FORMAT_UNDEFINED)
+                clears.back().depthStencil = { desc.clearDepth, 0 };
+
+            VkRenderPassBeginInfo info{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+            info.renderPass = m_Device.RenderPassFor(formats, depthFormat, samples, desc.loadOp);
+            info.framebuffer = framebuffer;
+            info.renderArea = { {0, 0}, { width, height } };
+            info.clearValueCount = static_cast<u32>(clears.size());
+            info.pClearValues = clears.data();
+            vkCmdBeginRenderPass(m_Cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
+        }
 
         // NOT a negative-height viewport. Vulkan's clip space already has +y pointing down; the
         // y-flip that ports of OpenGL renderers carry would invert everything drawn here. A
@@ -165,7 +197,8 @@ namespace hearth {
 
     void VulkanCommandList::EndRenderPass() {
         HEARTH_ASSERT(m_InPass, "EndRenderPass without an open pass");
-        vkCmdEndRendering(m_Cmd);
+        if (m_Device.Caps().dynamicRendering) m_Device.Rendering().end(m_Cmd);
+        else                                   vkCmdEndRenderPass(m_Cmd);
         m_InPass = false;
 
         if (m_CurrentTarget) {

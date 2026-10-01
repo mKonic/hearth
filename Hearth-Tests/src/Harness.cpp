@@ -12,6 +12,10 @@ namespace hearth::tests {
 
     Results& Tally() { return s_Results; }
 
+    namespace { ExpectErrors* s_Expect = nullptr; }
+    ExpectErrors::ExpectErrors()  { s_Expect = this; }
+    ExpectErrors::~ExpectErrors() { s_Expect = nullptr; }
+
     void Section(const char* name) {
         s_Section = name;
         std::printf("%s\n", name);
@@ -79,7 +83,9 @@ int main() {
 
     // A validation error is a test failure, not a log line nobody reads.
     hearth::SetLogSink([](hearth::LogLevel level, std::string_view message, void*) {
-        if (level == hearth::LogLevel::Error) {
+        if (level == hearth::LogLevel::Error && s_Expect) {
+            ++s_Expect->seen;
+        } else if (level == hearth::LogLevel::Error) {
             ++Tally().failed;
             std::printf("  FAIL [hearth] %.*s\n", int(message.size()), message.data());
         } else if (std::getenv("HEARTH_TEST_VERBOSE")) {
@@ -99,7 +105,8 @@ int main() {
     // positioned to catch -- bad barriers, unwritten descriptors, layout mismatches -- is
     // reported by them and not by a pixel comparison. Say which kind of run this was rather
     // than letting "0 failed" imply the stronger one.
-    std::printf("\n%d checks, %d failed%s\n", Tally().checks, Tally().failed,
+    std::printf("\n%s\n", Gpu().Caps().driverInfo.c_str());
+    std::printf("%d checks, %d failed%s\n", Tally().checks, Tally().failed,
                 Gpu().Caps().validationActive
                     ? ""
                     : "  (validation layers absent -- install them for a full run)");

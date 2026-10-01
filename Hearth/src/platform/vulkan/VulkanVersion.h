@@ -12,10 +12,10 @@
 
 namespace hearth {
 
-    // hearth's architectural floor. Dynamic rendering and synchronization2 are core in 1.3
-    // and the whole backend is built on them, so there is no meaningful 1.2 path; a device
-    // below this is rejected rather than silently given a slower one.
-    inline constexpr u32 kMinimumApiVersion = VK_API_VERSION_1_3;
+    // hearth's floor: what Android guarantees on every 64-bit device since Android 10.
+    // Everything above it is negotiated -- dynamic rendering (core 1.3, or the KHR extension,
+    // or hearth's own render-pass objects without either) and descriptor indexing (optional).
+    inline constexpr u32 kMinimumApiVersion = VK_API_VERSION_1_1;
 
     // The highest version these headers can describe. Requesting above it would name feature
     // structs the compiler has never seen, so a newer loader is deliberately clamped down to

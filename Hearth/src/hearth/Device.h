@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace hearth {
 
@@ -51,8 +52,23 @@ namespace hearth {
         bool depthBiasClamp = false;
         u32 framesInFlight = 2;
 
-        // Core features present beyond hearth's 1.3 floor. Reported so a consumer can branch
-        // on them; hearth does not yet route any of its own work through them.
+        // How render passes are recorded. True: dynamic rendering, core in 1.3 or through
+        // VK_KHR_dynamic_rendering on an older driver. False: classic VkRenderPass and
+        // VkFramebuffer objects, which hearth builds and caches itself -- the path for Vulkan
+        // 1.1 drivers that never got the extension. The CommandList API is the same on both.
+        bool dynamicRendering = false;
+
+        // Descriptor indexing: arrays of textures that may be left partly written and indexed
+        // with a non-uniform value (`nonuniformEXT` in GLSL). A sprite batcher's texture array
+        // needs it; a renderer with one texture per draw does not. Optional unless
+        // DeviceDesc::requireDescriptorIndexing.
+        bool descriptorIndexing = false;
+        // Whether a texture array can be rewritten while it is bound (BindGroup::Update during
+        // a frame that already used it). Implies descriptorIndexing.
+        bool updateAfterBind = false;
+
+        // Core features present beyond Vulkan 1.3. Reported so a consumer can branch on them;
+        // hearth does not yet route any of its own work through them.
         bool hostImageCopy = false;
         bool pushDescriptor = false;
         bool maintenance5 = false;
@@ -88,10 +104,14 @@ namespace hearth {
         bool enableValidation = true;
 #endif
 
-        // Raise hearth's 1.3 floor when your own code needs a newer core feature. A packed
-        // Vulkan version, so VK_API_VERSION_1_4 rather than 4 or 14; 0 leaves hearth's floor
-        // in place. CreateDevice returns null and logs the reason when it cannot be met.
+        // Raise hearth's 1.1 floor when your own code needs a newer core feature. A packed
+        // Vulkan version, so VK_API_VERSION_1_3 rather than 3 or 13; 0 leaves hearth's floor
+        // in place. CreateDevice fails with the reason when it cannot be met.
         u32 minimumApiVersion = 0;
+
+        // Refuse devices without descriptor indexing (DeviceCaps::descriptorIndexing) instead
+        // of running without it. For a renderer whose shaders index texture arrays.
+        bool requireDescriptorIndexing = false;
 
         // Where to keep the pipeline cache between runs. Empty means in-memory only, which
         // still helps a process that builds several similar pipelines but starts cold every
@@ -169,7 +189,30 @@ namespace hearth {
         virtual bool DeviceLost() const = 0;
     };
 
+    enum class DeviceErrorCode : u8 {
+        None,
+        LoaderTooOld,       // the Vulkan loader is older than 1.1
+        InstanceFailed,     // no driver at all, or instance creation refused
+        SurfaceFailed,      // the host's Surface could not make a VkSurfaceKHR
+        NoSuitableDevice,   // drivers exist, none meets the requirements: see `missing`
+        DeviceFailed,       // a device was chosen and then refused to be created
+    };
+
+    // Why CreateDevice returned null, in a form a caller can act on: tell the player their
+    // phone is unsupported, retry with lighter requirements, or report it.
+    struct DeviceError {
+        DeviceErrorCode code = DeviceErrorCode::None;
+        // One line, the same one that was logged.
+        std::string message;
+        // For NoSuitableDevice: what the closest device lacked, e.g. "Vulkan 1.3",
+        // "descriptor indexing", "presentation to this surface".
+        std::vector<std::string> missing;
+    };
+
+    const char* DeviceErrorName(DeviceErrorCode code);
+
     // Creates the device, or returns null after logging exactly why. Never partially succeeds.
-    Scope<Device> CreateDevice(const DeviceDesc& desc);
+    // `error`, when given, receives the reason.
+    Scope<Device> CreateDevice(const DeviceDesc& desc, DeviceError* error = nullptr);
 
 }

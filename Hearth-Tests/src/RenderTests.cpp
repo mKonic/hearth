@@ -280,7 +280,9 @@ void RunRenderTests() {
 
     Section("texture bindings");
 
-    {
+    if (!Gpu().Caps().descriptorIndexing) {
+        std::printf("  (no descriptor indexing; sampler-array tests skipped)\n");
+    } else {
         // A four-slot sampler array with only two slots filled. hearth pads the rest, and the
         // point of the test is that sampling slot 1 returns slot 1 -- a padding bug that
         // overwrote real entries would show up here as the wrong colour.
@@ -344,8 +346,40 @@ void RunRenderTests() {
             .binding = 0, .type = BindingType::SampledTexture,
             .textures = { magenta, blue } } });
         CheckPixel(At(sample(0), 4, 2, 2), 255, 0, 255, 255, 2, "slot 0 after Update is magenta");
+    }
 
-        Section("render target resize");
+    Section("render target resize");
+
+    {
+        PipelineDesc desc;
+        desc.vertex = Gpu().CreateShader(ShaderDesc{
+            .spirv = std::vector<u32>(std::begin(kTexturedVert), std::end(kTexturedVert)),
+            .stage = ShaderStage::Vertex, .debugName = "textured.vert" });
+        desc.fragment = Gpu().CreateShader(ShaderDesc{
+            .spirv = std::vector<u32>(std::begin(kSampledFrag), std::end(kSampledFrag)),
+            .stage = ShaderStage::Fragment, .debugName = "sampled.frag" });
+        desc.vertexBuffers = { VertexBufferLayout{
+            .stride = sizeof(TexturedVertex),
+            .attributes = {
+                { 0, Format::RG32_SFLOAT, offsetof(TexturedVertex, x) },
+                { 1, Format::RG32_SFLOAT, offsetof(TexturedVertex, u) },
+            } } };
+        desc.bindings = { BindingSlot{
+            .binding = 0, .type = BindingType::SampledTexture,
+            .stages = StageBit(ShaderStage::Fragment) } };
+        desc.blend       = BlendMode::None;
+        desc.colorFormats = { Format::RGBA8_UNORM };
+        desc.debugName   = "sampled";
+        auto pipeline = Gpu().CreatePipeline(desc);
+
+        const TexturedVertex quad[6] = {
+            { -1.0f, -1.0f, 0.0f, 0.0f }, { 1.0f, -1.0f, 1.0f, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f },
+            {  1.0f,  1.0f, 1.0f, 1.0f }, { -1.0f, 1.0f, 0.0f, 1.0f }, { -1.0f, -1.0f, 0.0f, 0.0f },
+        };
+        auto vertices = Gpu().CreateBuffer(BufferDesc{
+            .size = sizeof(quad), .usage = BufferUsage::Vertex,
+            .memory = MemoryKind::HostVisible, .debugName = "sampled-quad" });
+        vertices->Upload(quad, sizeof(quad));
 
         // A target sampled through a bind group, then resized and redrawn. The texture object
         // must survive the resize and the group must follow the new image without being
@@ -366,16 +400,24 @@ void RunRenderTests() {
         };
 
         const Ref<Texture> before = source->ColorTexture();
-        group->Update({ BindGroupEntry{
+        auto group = Gpu().CreateBindGroup(pipeline, { BindGroupEntry{
             .binding = 0, .type = BindingType::SampledTexture, .textures = { before } } });
+        auto sample = [&] {
+            return RenderToPixels(4, 4, Color{ 0.0f, 0.0f, 0.0f, 1.0f }, [&](CommandList& cmd) {
+                cmd.BindPipeline(pipeline);
+                cmd.BindBindGroup(group);
+                cmd.BindVertexBuffer(0, vertices);
+                cmd.Draw(6);
+            });
+        };
         fill(Color{ 1.0f, 0.0f, 0.0f, 1.0f });
-        CheckPixel(At(sample(0), 4, 2, 2), 255, 0, 0, 255, 2, "target sampled before resize");
+        CheckPixel(At(sample(), 4, 2, 2), 255, 0, 0, 255, 2, "target sampled before resize");
 
         source->Resize(16, 8);
         fill(Color{ 0.0f, 1.0f, 0.0f, 1.0f });
         CHECK(source->ColorTexture().get() == before.get());
         CHECK(before->Width() == 16 && before->Height() == 8);
-        CheckPixel(At(sample(0), 4, 2, 2), 0, 255, 0, 255, 2, "same group after resize");
+        CheckPixel(At(sample(), 4, 2, 2), 0, 255, 0, 255, 2, "same group after resize");
     }
 }
 

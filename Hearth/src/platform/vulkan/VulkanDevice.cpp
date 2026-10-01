@@ -8,6 +8,8 @@
 #include <VkBootstrap.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 
@@ -59,6 +61,7 @@ namespace hearth {
         m_Swapchain.reset();
         DestroyFrames();
         for (auto& [key, sampler] : m_Samplers) vkDestroySampler(m_Device, sampler, nullptr);
+        for (auto& [key, pass] : m_RenderPasses) vkDestroyRenderPass(m_Device, pass, nullptr);
         if (m_ImmediateFence) vkDestroyFence(m_Device, m_ImmediateFence, nullptr);
         if (m_ImmediatePool)  vkDestroyCommandPool(m_Device, m_ImmediatePool, nullptr);
         for (auto pool : m_DescriptorPools) vkDestroyDescriptorPool(m_Device, pool, nullptr);
@@ -69,11 +72,70 @@ namespace hearth {
         if (m_Instance)   vkDestroyInstance(m_Instance, nullptr);
     }
 
+    namespace {
+
+        // HEARTH_COMPAT: a comma-separated list that switches off what a device offers, so the
+        // paths an older phone takes can be exercised on any machine (the test suite runs once
+        // per path). "extension" uses VK_KHR_dynamic_rendering even on a 1.3 device,
+        // "renderpass" uses VkRenderPass objects, "no-indexing" leaves descriptor indexing off.
+        struct Compat {
+            bool extension = false;
+            bool renderPass = false;
+            bool noIndexing = false;
+        };
+
+        Compat ReadCompat() {
+            Compat compat;
+            const char* env = std::getenv("HEARTH_COMPAT");
+            if (!env || !*env) return compat;
+            const std::string list = env;
+            auto has = [&](std::string_view word) {
+                size_t start = 0;
+                while (start <= list.size()) {
+                    const size_t end = std::min(list.find(',', start), list.size());
+                    if (std::string_view(list).substr(start, end - start) == word) return true;
+                    start = end + 1;
+                }
+                return false;
+            };
+            compat.extension  = has("extension");
+            compat.renderPass = has("renderpass");
+            compat.noIndexing = has("no-indexing");
+            HEARTH_WARN("HEARTH_COMPAT={}: features are being withheld on purpose", list);
+            return compat;
+        }
+
+        bool HasExtension(VkPhysicalDevice physical, const char* name) {
+            u32 count = 0;
+            vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
+            std::vector<VkExtensionProperties> extensions(count);
+            vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, extensions.data());
+            for (const auto& e : extensions)
+                if (std::strcmp(e.extensionName, name) == 0) return true;
+            return false;
+        }
+
+        std::string VersionString(u32 version) {
+            return std::format("{}.{}", VK_API_VERSION_MAJOR(version), VK_API_VERSION_MINOR(version));
+        }
+
+    }
+
+    bool VulkanDevice::Fail(DeviceErrorCode code, std::string message,
+                            std::vector<std::string> missing) {
+        HEARTH_ERROR("{}", message);
+        m_Error.code = code;
+        m_Error.message = std::move(message);
+        m_Error.missing = std::move(missing);
+        return false;
+    }
+
     // Instance, surface and device are one step: vk-bootstrap's PhysicalDeviceSelector needs the
     // live vkb::Instance -- its api version, its enabled extensions and its loader function
     // pointers -- and none of that can be rebuilt from a bare VkInstance handle afterwards.
     bool VulkanDevice::InitVulkan(const DeviceDesc& desc) {
         m_Validation = desc.enableValidation;
+        const Compat compat = ReadCompat();
 
         // `request_validation_layers` is a request, not a requirement: when the layers are not
         // installed vk-bootstrap quietly builds the instance without them and succeeds. Asking
@@ -84,22 +146,22 @@ namespace hearth {
             auto systemInfo = vkb::SystemInfo::get_system_info();
             if (!systemInfo || !systemInfo->validation_layers_available) {
                 HEARTH_WARN("validation was requested but the layers are not installed "
-                            "(Arch: vulkan-validationlayers); continuing without them");
+                            "(Arch: vulkan-validation-layers); continuing without them");
                 m_Validation = false;
             }
         }
 
         const u32 instanceVersion = NegotiateInstanceVersion();
-        if (instanceVersion == 0) return false;   // already reported, with the reason
+        if (instanceVersion == 0)
+            return Fail(DeviceErrorCode::LoaderTooOld,
+                        std::format("the Vulkan loader is older than {}",
+                                    VersionString(kMinimumApiVersion)));
 
         const u32 floor = std::max(desc.minimumApiVersion, kMinimumApiVersion);
-        if (instanceVersion < floor) {
-            HEARTH_ERROR("this application asked for Vulkan {}.{} but the loader offers {}.{}",
-                         VK_API_VERSION_MAJOR(floor), VK_API_VERSION_MINOR(floor),
-                         VK_API_VERSION_MAJOR(instanceVersion),
-                         VK_API_VERSION_MINOR(instanceVersion));
-            return false;
-        }
+        if (instanceVersion < floor)
+            return Fail(DeviceErrorCode::LoaderTooOld,
+                        std::format("this application asked for Vulkan {} but the loader offers {}",
+                                    VersionString(floor), VersionString(instanceVersion)));
 
         const std::vector<const char*> extra =
             m_Surface ? m_Surface->RequiredInstanceExtensions() : std::vector<const char*>{};
@@ -124,10 +186,9 @@ namespace hearth {
             m_Validation = false;
             result = build(false);
         }
-        if (!result) {
-            HEARTH_ERROR("vulkan instance creation failed: {}", result.error().message());
-            return false;
-        }
+        if (!result)
+            return Fail(DeviceErrorCode::InstanceFailed,
+                        std::format("vulkan instance creation failed: {}", result.error().message()));
 
         vkb::Instance instance = result.value();
         m_Instance  = instance.instance;
@@ -135,62 +196,131 @@ namespace hearth {
 
         if (m_Surface) {
             const VkResult created = m_Surface->CreateVulkanSurface(m_Instance, &m_VkSurface);
-            if (created != VK_SUCCESS) {
-                HEARTH_ERROR("the host could not create a presentation surface: {}",
-                             VkResultName(created));
-                return false;
-            }
+            if (created != VK_SUCCESS)
+                return Fail(DeviceErrorCode::SurfaceFailed,
+                            std::format("the host could not create a presentation surface: {}",
+                                        VkResultName(created)));
         }
 
-        // 1.3 dynamic rendering + synchronization2: there is no VkRenderPass and no VkFramebuffer
-        // object anywhere in this library.
-        VkPhysicalDeviceVulkan13Features f13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-        f13.dynamicRendering = VK_TRUE;
-        f13.synchronization2 = VK_TRUE;
-        // Every one of these is a feature a Vulkan 1.3 device is REQUIRED by the spec to
-        // support, so asking for them narrows nothing. They are enabled because a shader that
-        // declares the matching SPIR-V capability -- which glslc emits for `discard` on its
-        // own -- fails vkCreateShaderModule if the feature was not switched on, and the error
-        // names the capability rather than the line of GLSL that caused it.
-        f13.shaderDemoteToHelperInvocation     = VK_TRUE;
-        f13.shaderTerminateInvocation          = VK_TRUE;
-        f13.shaderZeroInitializeWorkgroupMemory = VK_TRUE;
-        f13.subgroupSizeControl                = VK_TRUE;
-        f13.computeFullSubgroups               = VK_TRUE;
-        f13.maintenance4                       = VK_TRUE;
+        // Descriptor indexing through the struct that was promoted into 1.2 rather than
+        // VkPhysicalDeviceVulkan12Features, so the same request works on a 1.1 driver with
+        // VK_EXT_descriptor_indexing. partiallyBound is what makes an array binding legal to
+        // leave half-written; non-uniform indexing is what a batcher's shader does.
+        VkPhysicalDeviceDescriptorIndexingFeatures indexing{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES };
+        indexing.runtimeDescriptorArray = VK_TRUE;
+        indexing.descriptorBindingPartiallyBound = VK_TRUE;
+        indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
 
-        // Descriptor indexing is what lets one draw address many textures -- a sprite batch, a
-        // glyph atlas spread over several pages. partiallyBound is what makes an array binding
-        // legal to leave half-written.
-        VkPhysicalDeviceVulkan12Features f12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-        f12.descriptorIndexing = VK_TRUE;
-        f12.runtimeDescriptorArray = VK_TRUE;
-        f12.descriptorBindingPartiallyBound = VK_TRUE;
-        f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-        // What makes VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT legal on a sampler array,
-        // and what makes rewriting one that is already bound legal. Only the sampled-image
-        // variants are required: the uniform-buffer one is genuinely absent on some hardware,
-        // so VulkanPipeline applies update-after-bind to texture arrays only.
-        f12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
-        f12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
-
-
+        // Select on the floor alone, so the best GPU wins (vk-bootstrap prefers discrete), and
+        // then take the best rendering path that GPU offers -- rather than settling for a weaker
+        // GPU because it happens to have a newer driver.
         vkb::PhysicalDeviceSelector selector{ instance };
-        selector.set_minimum_version(floor)
-                .set_required_features_13(f13)
-                .set_required_features_12(f12);
-
+        selector.set_minimum_version(floor);
+        if (desc.requireDescriptorIndexing) selector.add_required_extension_features(indexing);
         if (m_VkSurface) selector.set_surface(m_VkSurface);
         else             selector.defer_surface_initialization();
 
         auto physical = selector.select();
         if (!physical) {
-            HEARTH_ERROR("no Vulkan 1.3 device with dynamic rendering and descriptor indexing: {}",
-                         physical.error().message());
-            return false;
+            std::vector<std::string> missing = DescribeMissing(floor, desc.requireDescriptorIndexing);
+            std::string list;
+            for (const auto& m : missing) list += (list.empty() ? "" : ", ") + m;
+            return Fail(DeviceErrorCode::NoSuitableDevice,
+                        std::format("no suitable Vulkan device{}{} ({})",
+                                    list.empty() ? "" : ": missing ", list,
+                                    physical.error().message()),
+                        std::move(missing));
         }
 
         vkb::PhysicalDevice chosen = physical.value();
+
+        VkPhysicalDeviceProperties selected{};
+        vkGetPhysicalDeviceProperties(chosen.physical_device, &selected);
+        // The usable version is the lowest of the three parties: loader, headers, device.
+        m_ApiVersion = std::min(instanceVersion, selected.apiVersion);
+
+        // ---- the rendering path ------------------------------------------------------------
+        bool dynamicRendering = false;
+        const char* path = "render passes";
+        if (m_ApiVersion >= VK_API_VERSION_1_3 && !compat.extension && !compat.renderPass) {
+            VkPhysicalDeviceVulkan13Features f13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+            f13.dynamicRendering = VK_TRUE;
+            if (chosen.enable_extension_features_if_present(f13)) {
+                dynamicRendering = true;
+                m_RenderingFns.begin = reinterpret_cast<PFN_vkCmdBeginRendering>(
+                    vkGetInstanceProcAddr(m_Instance, "vkCmdBeginRendering"));
+                m_RenderingFns.end = reinterpret_cast<PFN_vkCmdEndRendering>(
+                    vkGetInstanceProcAddr(m_Instance, "vkCmdEndRendering"));
+                path = "dynamic rendering";
+            }
+        }
+        if (!dynamicRendering && !compat.renderPass
+            && HasExtension(chosen.physical_device, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
+            // Its dependencies are core from 1.2; a 1.1 driver lists them as extensions.
+            std::vector<const char*> needed = { VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
+            if (m_ApiVersion < VK_API_VERSION_1_2) {
+                needed.push_back(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+                needed.push_back(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);
+                needed.push_back(VK_KHR_MULTIVIEW_EXTENSION_NAME);
+                needed.push_back(VK_KHR_MAINTENANCE_2_EXTENSION_NAME);
+            }
+            VkPhysicalDeviceDynamicRenderingFeaturesKHR dr{
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR };
+            dr.dynamicRendering = VK_TRUE;
+            if (chosen.enable_extensions_if_present(needed)
+                && chosen.enable_extension_features_if_present(dr)) {
+                dynamicRendering = true;
+                m_RenderingFns.begin = reinterpret_cast<PFN_vkCmdBeginRendering>(
+                    vkGetInstanceProcAddr(m_Instance, "vkCmdBeginRenderingKHR"));
+                m_RenderingFns.end = reinterpret_cast<PFN_vkCmdEndRendering>(
+                    vkGetInstanceProcAddr(m_Instance, "vkCmdEndRenderingKHR"));
+                path = "dynamic rendering (KHR)";
+            }
+        }
+        if (dynamicRendering && (!m_RenderingFns.begin || !m_RenderingFns.end))
+            return Fail(DeviceErrorCode::DeviceFailed,
+                        "dynamic rendering was enabled but its entry points did not resolve");
+
+        // ---- optional features ---------------------------------------------------------------
+        // Every one of these is required of a Vulkan 1.3 device, so on one this narrows nothing.
+        // They are enabled because a shader that declares the matching SPIR-V capability --
+        // which glslc emits for `discard` when targeting 1.3 -- fails vkCreateShaderModule if
+        // the feature is off, and the error names the capability, not the line of GLSL.
+        // Not alongside the KHR dynamic-rendering struct: the spec forbids chaining a feature
+        // struct together with the VkPhysicalDeviceVulkan13Features that contains it.
+        const bool khrStruct = dynamicRendering && m_ApiVersion >= VK_API_VERSION_1_3
+                            && std::string_view(path) != "dynamic rendering";
+        if (m_ApiVersion >= VK_API_VERSION_1_3 && !khrStruct) {
+            VkPhysicalDeviceVulkan13Features shader13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+            shader13.shaderDemoteToHelperInvocation      = VK_TRUE;
+            shader13.shaderTerminateInvocation           = VK_TRUE;
+            shader13.shaderZeroInitializeWorkgroupMemory = VK_TRUE;
+            shader13.subgroupSizeControl                 = VK_TRUE;
+            shader13.computeFullSubgroups                = VK_TRUE;
+            shader13.maintenance4                        = VK_TRUE;
+            chosen.enable_extension_features_if_present(shader13);
+        }
+
+        const bool indexingExtension = m_ApiVersion < VK_API_VERSION_1_2;
+        if (!compat.noIndexing
+            && (!indexingExtension
+                || chosen.enable_extension_if_present(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))) {
+            m_Caps.descriptorIndexing = chosen.enable_extension_features_if_present(indexing);
+            // What makes VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT legal on a sampler array,
+            // and what makes rewriting one that is already bound legal. Only the sampled-image
+            // variants: the uniform-buffer one is genuinely absent on some hardware.
+            VkPhysicalDeviceDescriptorIndexingFeatures afterBind{
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES };
+            afterBind.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            afterBind.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+            m_Caps.updateAfterBind = m_Caps.descriptorIndexing
+                                  && chosen.enable_extension_features_if_present(afterBind);
+        }
+        if (desc.requireDescriptorIndexing && !m_Caps.descriptorIndexing)
+            return Fail(DeviceErrorCode::NoSuitableDevice,
+                        "descriptor indexing was required and is unavailable",
+                        { "descriptor indexing" });
 
         // Anisotropic filtering is optional in the spec, so it is enabled if the device has
         // it rather than required: a device without it still runs, and Caps().maxAnisotropy
@@ -202,11 +332,6 @@ namespace hearth {
         biasClamp.depthBiasClamp = VK_TRUE;
         m_Caps.depthBiasClamp = chosen.enable_features_if_present(biasClamp);
 
-        VkPhysicalDeviceProperties selected{};
-        vkGetPhysicalDeviceProperties(chosen.physical_device, &selected);
-        // The usable version is the lowest of the three parties: loader, headers, device.
-        m_ApiVersion = std::min(instanceVersion, selected.apiVersion);
-
         OptionalFeatureStorage optionalStorage;
         std::vector<void*> optionalChain;
         const OptionalFeatures optional = ChainOptionalFeatures(
@@ -216,23 +341,23 @@ namespace hearth {
         for (void* link : optionalChain) deviceBuilder.add_pNext(link);
 
         auto built = deviceBuilder.build();
-        if (!built) {
-            HEARTH_ERROR("logical device creation failed: {}", built.error().message());
-            return false;
-        }
+        if (!built)
+            return Fail(DeviceErrorCode::DeviceFailed,
+                        std::format("logical device creation failed: {}", built.error().message()));
 
         m_Physical       = chosen.physical_device;
         m_Device         = built.value().device;
         m_GraphicsQueue  = built.value().get_queue(vkb::QueueType::graphics).value();
         m_GraphicsFamily = built.value().get_queue_index(vkb::QueueType::graphics).value();
+        m_Caps.dynamicRendering = dynamicRendering;
 
         // The plain maxPerStageDescriptorSampledImages is the wrong limit to report: an array
         // binding a batcher rewrites while it is bound needs UPDATE_AFTER_BIND, and that has its
         // own, usually much larger, cap.
-        VkPhysicalDeviceDescriptorIndexingProperties indexing{
+        VkPhysicalDeviceDescriptorIndexingProperties indexingProps{
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES };
         VkPhysicalDeviceProperties2 props2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
-        props2.pNext = &indexing;
+        if (m_Caps.descriptorIndexing) props2.pNext = &indexingProps;
         vkGetPhysicalDeviceProperties2(m_Physical, &props2);
         const VkPhysicalDeviceProperties& props = props2.properties;
         m_Caps.deviceName = props.deviceName;
@@ -249,20 +374,74 @@ namespace hearth {
         for (u32 count : { 64u, 32u, 16u, 8u, 4u, 2u }) {
             if (m_Caps.sampleCountMask & count) { m_Caps.maxSamples = count; break; }
         }
-        m_Caps.maxTexturesPerBindGroup =
-            std::max(indexing.maxDescriptorSetUpdateAfterBindSampledImages,
-                     props.limits.maxPerStageDescriptorSampledImages);
+        m_Caps.maxTexturesPerBindGroup = props.limits.maxPerStageDescriptorSampledImages;
+        if (m_Caps.updateAfterBind)
+            m_Caps.maxTexturesPerBindGroup =
+                std::max(indexingProps.maxDescriptorSetUpdateAfterBindSampledImages,
+                         m_Caps.maxTexturesPerBindGroup);
         m_Caps.apiVersion       = m_ApiVersion;
         m_Caps.validationActive = m_Validation;
         m_Caps.hostImageCopy  = optional.hostImageCopy;
         m_Caps.pushDescriptor = optional.pushDescriptor;
         m_Caps.maintenance5   = optional.maintenance5;
-        m_Caps.driverInfo     = "Vulkan " + DescribeOptional(m_ApiVersion, optional);
+        m_Caps.driverInfo     = std::format("Vulkan {}, {}{}", DescribeOptional(m_ApiVersion, optional),
+                                            path, m_Caps.descriptorIndexing ? ", descriptor indexing" : "");
 
         HEARTH_INFO("{} ({}){}, {}", m_Caps.deviceName,
                     m_Caps.discrete ? "discrete" : (m_Caps.softwareRasterizer ? "CPU" : "integrated"),
                     m_Validation ? ", validation on" : "", m_Caps.driverInfo);
         return true;
+    }
+
+    // Why selection found nothing, for the device that came closest: the one with the highest
+    // version. Asked of the driver directly, because vk-bootstrap reports only the first reason
+    // it rejected each device and not in a form a caller can show.
+    std::vector<std::string> VulkanDevice::DescribeMissing(u32 floor, bool needIndexing) const {
+        u32 count = 0;
+        vkEnumeratePhysicalDevices(m_Instance, &count, nullptr);
+        std::vector<VkPhysicalDevice> devices(count);
+        vkEnumeratePhysicalDevices(m_Instance, &count, devices.data());
+        if (devices.empty()) return { "a Vulkan driver" };
+
+        VkPhysicalDevice best = devices.front();
+        VkPhysicalDeviceProperties bestProps{};
+        vkGetPhysicalDeviceProperties(best, &bestProps);
+        for (VkPhysicalDevice d : devices) {
+            VkPhysicalDeviceProperties p{};
+            vkGetPhysicalDeviceProperties(d, &p);
+            if (p.apiVersion > bestProps.apiVersion) { best = d; bestProps = p; }
+        }
+
+        std::vector<std::string> missing;
+        if (bestProps.apiVersion < floor) missing.push_back("Vulkan " + VersionString(floor));
+
+        if (needIndexing) {
+            VkPhysicalDeviceDescriptorIndexingFeatures f{
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES };
+            VkPhysicalDeviceFeatures2 f2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+            f2.pNext = &f;
+            vkGetPhysicalDeviceFeatures2(best, &f2);
+            if (!f.runtimeDescriptorArray || !f.descriptorBindingPartiallyBound
+                || !f.shaderSampledImageArrayNonUniformIndexing)
+                missing.push_back("descriptor indexing");
+        }
+
+        u32 families = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(best, &families, nullptr);
+        std::vector<VkQueueFamilyProperties> queues(families);
+        vkGetPhysicalDeviceQueueFamilyProperties(best, &families, queues.data());
+        bool graphics = false, present = !m_VkSurface;
+        for (u32 i = 0; i < families; ++i) {
+            if (queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) graphics = true;
+            if (m_VkSurface) {
+                VkBool32 supported = VK_FALSE;
+                vkGetPhysicalDeviceSurfaceSupportKHR(best, i, m_VkSurface, &supported);
+                present = present || supported;
+            }
+        }
+        if (!graphics) missing.push_back("a graphics queue");
+        if (!present)  missing.push_back("presentation to this surface");
+        return missing;
     }
 
     bool VulkanDevice::InitAllocator() {
@@ -304,8 +483,8 @@ namespace hearth {
         VkDescriptorPoolCreateInfo info{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         // UPDATE_AFTER_BIND so a renderer can rewrite an array binding that is already bound --
         // a sprite batcher that discovers a texture mid-scene does exactly that.
-        info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
-                   | VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+        info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        if (m_Caps.updateAfterBind) info.flags |= VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
         info.maxSets       = sets;
         info.poolSizeCount = static_cast<u32>(std::size(sizes));
         info.pPoolSizes    = sizes;
@@ -461,6 +640,91 @@ namespace hearth {
     }
 
     Swapchain* VulkanDevice::GetSwapchain() { return m_Swapchain.get(); }
+
+    // Only on the render-pass path. One VkRenderPass per attachment layout and load op; a
+    // pipeline is built against the Clear variant, which every other variant with the same
+    // formats and sample count is compatible with.
+    //
+    // Attachments are numbered colours first, then (multisampled) their resolve targets, then
+    // depth. Every layout is the one the pass uses throughout: CommandList moves images into
+    // and out of it with its own barriers, exactly as on the dynamic-rendering path, so the
+    // pass itself transitions nothing.
+    VkRenderPass VulkanDevice::RenderPassFor(const std::vector<VkFormat>& colors, VkFormat depth,
+                                             u32 samples, LoadOp load) {
+        const std::scoped_lock lock(m_RenderPassMutex);
+        for (const auto& [key, pass] : m_RenderPasses)
+            if (key.colors == colors && key.depth == depth && key.samples == samples && key.load == load)
+                return pass;
+
+        const VkSampleCountFlagBits sampleBits = static_cast<VkSampleCountFlagBits>(samples);
+        const bool resolve = samples > 1;
+        const VkAttachmentLoadOp loadOp = load == LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                        : load == LoadOp::Load  ? VK_ATTACHMENT_LOAD_OP_LOAD
+                                                                : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+
+        std::vector<VkAttachmentDescription> attachments;
+        std::vector<VkAttachmentReference> colorRefs, resolveRefs;
+        for (VkFormat format : colors) {
+            VkAttachmentDescription a{};
+            a.format = format;
+            a.samples = sampleBits;
+            a.loadOp = loadOp;
+            a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            a.initialLayout = a.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            colorRefs.push_back({ static_cast<u32>(attachments.size()),
+                                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+            attachments.push_back(a);
+        }
+        if (resolve) {
+            for (VkFormat format : colors) {
+                VkAttachmentDescription a{};
+                a.format = format;
+                a.samples = VK_SAMPLE_COUNT_1_BIT;
+                a.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+                a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+                a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+                a.initialLayout = a.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                resolveRefs.push_back({ static_cast<u32>(attachments.size()),
+                                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+                attachments.push_back(a);
+            }
+        }
+        VkAttachmentReference depthRef{};
+        if (depth != VK_FORMAT_UNDEFINED) {
+            VkAttachmentDescription a{};
+            a.format = depth;
+            a.samples = sampleBits;
+            a.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;       // depth is cleared by every pass
+            a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            a.initialLayout = a.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthRef = { static_cast<u32>(attachments.size()),
+                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+            attachments.push_back(a);
+        }
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = static_cast<u32>(colorRefs.size());
+        subpass.pColorAttachments = colorRefs.data();
+        subpass.pResolveAttachments = resolve ? resolveRefs.data() : nullptr;
+        subpass.pDepthStencilAttachment = depth != VK_FORMAT_UNDEFINED ? &depthRef : nullptr;
+
+        VkRenderPassCreateInfo info{ VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+        info.attachmentCount = static_cast<u32>(attachments.size());
+        info.pAttachments = attachments.data();
+        info.subpassCount = 1;
+        info.pSubpasses = &subpass;
+
+        VkRenderPass pass = VK_NULL_HANDLE;
+        HEARTH_VK_CHECK(vkCreateRenderPass(m_Device, &info, nullptr, &pass));
+        m_RenderPasses.push_back({ RenderPassKey{ colors, depth, samples, load }, pass });
+        return pass;
+    }
 
     VkSampler VulkanDevice::SamplerFor(Filter minFilter, Filter magFilter, AddressMode address,
                                        u32 mipLevels, f32 maxAnisotropy) {
@@ -728,9 +992,29 @@ namespace hearth {
         m_SurfaceGone = false;
     }
 
-    Scope<Device> CreateDevice(const DeviceDesc& desc) {
+    const char* DeviceErrorName(DeviceErrorCode code) {
+        switch (code) {
+            case DeviceErrorCode::None:             return "none";
+            case DeviceErrorCode::LoaderTooOld:     return "loader too old";
+            case DeviceErrorCode::InstanceFailed:   return "instance creation failed";
+            case DeviceErrorCode::SurfaceFailed:    return "surface creation failed";
+            case DeviceErrorCode::NoSuitableDevice: return "no suitable device";
+            case DeviceErrorCode::DeviceFailed:     return "device creation failed";
+        }
+        return "unknown";
+    }
+
+    Scope<Device> CreateDevice(const DeviceDesc& desc, DeviceError* error) {
         auto device = CreateScope<VulkanDevice>(desc);
-        if (!device->Ok()) return nullptr;
+        if (error) *error = device->Error();
+        if (!device->Ok()) {
+            // A failure past device selection (an allocator, a command pool) has no code yet.
+            if (error && error->code == DeviceErrorCode::None) {
+                error->code = DeviceErrorCode::DeviceFailed;
+                error->message = "device initialisation failed after creation";
+            }
+            return nullptr;
+        }
         return device;
     }
 

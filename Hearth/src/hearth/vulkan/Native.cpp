@@ -51,6 +51,15 @@ namespace hearth::vk {
         TransitionImageRaw(cmd, image, from, to, aspect);
     }
 
+    VkRenderPass CompatibleRenderPass(Device& device, const std::vector<Format>& colors,
+                                      Format depth, u32 samples) {
+        auto& impl = Impl(device);
+        if (impl.Caps().dynamicRendering) return VK_NULL_HANDLE;
+        std::vector<VkFormat> formats;
+        for (Format f : colors) formats.push_back(ToVk(f));
+        return impl.RenderPassFor(formats, ToVk(depth), samples ? samples : 1, LoadOp::Clear);
+    }
+
     const char* ResultName(VkResult result) { return VkResultName(result); }
 
 }

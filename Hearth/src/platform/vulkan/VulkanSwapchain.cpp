@@ -69,7 +69,23 @@ namespace hearth {
         HEARTH_TRACE("swapchain {}x{}, {} images", m_Width, m_Height, m_Images.size());
     }
 
+    VkFramebuffer VulkanSwapchain::Framebuffer(u32 i) {
+        if (m_Framebuffers.size() != m_Images.size()) m_Framebuffers.assign(m_Images.size(), VK_NULL_HANDLE);
+        if (m_Framebuffers[i]) return m_Framebuffers[i];
+        VkFramebufferCreateInfo info{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+        info.renderPass = m_Device.RenderPassFor({ m_Format }, VK_FORMAT_UNDEFINED, 1, LoadOp::Clear);
+        info.attachmentCount = 1;
+        info.pAttachments = &m_Views[i];
+        info.width = m_Width;
+        info.height = m_Height;
+        info.layers = 1;
+        HEARTH_VK_CHECK(vkCreateFramebuffer(m_Device.Raw(), &info, nullptr, &m_Framebuffers[i]));
+        return m_Framebuffers[i];
+    }
+
     void VulkanSwapchain::Destroy() {
+        for (auto fb : m_Framebuffers) if (fb) vkDestroyFramebuffer(m_Device.Raw(), fb, nullptr);
+        m_Framebuffers.clear();
         if (!m_Swapchain && m_Views.empty()) return;
         for (auto view : m_Views) vkDestroyImageView(m_Device.Raw(), view, nullptr);
         for (auto semaphore : m_RenderFinished) vkDestroySemaphore(m_Device.Raw(), semaphore, nullptr);

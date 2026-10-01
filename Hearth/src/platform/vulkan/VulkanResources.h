@@ -180,6 +180,8 @@ namespace hearth {
         VkImage ColorImage(u32 index) const;
         VkImageView DepthView() const { return m_DepthView; }
         VkImage DepthImage() const { return m_DepthImage; }
+        // The render-pass path's framebuffer over every attachment, made on first use.
+        VkFramebuffer Framebuffer();
         VkSampleCountFlagBits Samples() const { return m_Samples; }
         const RenderTargetDesc& Desc() const { return m_Desc; }
 
@@ -204,6 +206,7 @@ namespace hearth {
         VkImage            m_DepthImage = VK_NULL_HANDLE;
         VkImageView        m_DepthView = VK_NULL_HANDLE;
         VmaAllocation      m_DepthAllocation = nullptr;
+        VkFramebuffer      m_Framebuffer = VK_NULL_HANDLE;
     };
 
 }

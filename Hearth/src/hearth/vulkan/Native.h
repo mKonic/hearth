@@ -58,6 +58,13 @@ namespace hearth::vk {
                          VkImageLayout from, VkImageLayout to,
                          VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
+    // On the render-pass path (Caps().dynamicRendering false) a raw VkPipeline must be built
+    // against a render pass compatible with the one it is drawn in; this is that pass for
+    // these attachments. VK_NULL_HANDLE with dynamic rendering, where the pipeline chains a
+    // VkPipelineRenderingCreateInfo instead.
+    VkRenderPass CompatibleRenderPass(Device& device, const std::vector<Format>& colors,
+                                      Format depth = Format::Undefined, u32 samples = 1);
+
     const char* ResultName(VkResult result);
 
 }

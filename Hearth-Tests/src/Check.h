@@ -20,6 +20,14 @@ namespace hearth::tests {
     void Section(const char* name);
     void Fail(const char* file, int line, const std::string& message);
 
+    // While one of these is alive, hearth errors are counted here instead of failing the
+    // suite: for a test that provokes a failure on purpose and asserts it was reported.
+    struct ExpectErrors {
+        ExpectErrors();
+        ~ExpectErrors();
+        int seen = 0;
+    };
+
     inline void Record(bool ok, const char* file, int line, const std::string& message) {
         ++Tally().checks;
         if (!ok) Fail(file, line, message);

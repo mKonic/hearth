@@ -135,15 +135,14 @@ void RunComputeTests() {
             .spirv = std::vector<u32>(std::begin(kTexturedVert), std::end(kTexturedVert)),
             .stage = ShaderStage::Vertex, .debugName = "sample.vert" });
         gfx.fragment = gpu.CreateShader(ShaderDesc{
-            .spirv = std::vector<u32>(std::begin(kTexturedFrag), std::end(kTexturedFrag)),
+            .spirv = std::vector<u32>(std::begin(kSampledFrag), std::end(kSampledFrag)),
             .stage = ShaderStage::Fragment, .debugName = "sample.frag" });
         struct TexVertex { f32 x, y, u, v; };
         gfx.vertexBuffers = { VertexBufferLayout{
             .stride = sizeof(TexVertex),
             .attributes = { { 0, Format::RG32_SFLOAT, 0 }, { 1, Format::RG32_SFLOAT, 8 } } } };
         gfx.bindings = { BindingSlot{ .binding = 0, .type = BindingType::SampledTexture,
-                                      .count = 4, .stages = StageBit(ShaderStage::Fragment) } };
-        gfx.pushConstantSize = sizeof(u32);
+                                      .stages = StageBit(ShaderStage::Fragment) } };
         gfx.blend = BlendMode::None;
         gfx.colorFormats = { Format::RGBA8_UNORM };
         gfx.debugName = "sample-storage";
@@ -160,13 +159,11 @@ void RunComputeTests() {
             .memory = MemoryKind::HostVisible, .debugName = "sample-quad" });
         vertices->Upload(quad, sizeof(quad));
 
-        const u32 slot = 0;
         auto pixels = RenderToPixels(4, 4, Color{ 1.0f, 0.0f, 0.0f, 1.0f },
                                      [&](CommandList& cmd) {
             cmd.BindPipeline(gfxPipeline);
             cmd.BindBindGroup(gfxGroup);
             cmd.BindVertexBuffer(0, vertices);
-            cmd.SetPushConstants(&slot, sizeof(slot));
             cmd.Draw(6);
         });
         const Pixel sampled = At(pixels, 4, 2, 2);

@@ -356,10 +356,12 @@ namespace hearth {
                 // retire -- is added only for texture arrays: it is gated on a per-descriptor-
                 // type device feature, and the uniform-buffer variant is missing on enough
                 // hardware that requiring it would narrow which GPUs hearth runs on.
+                // Both are descriptor-indexing features, so a device without them gets plain
+                // arrays: hearth pads every slot, so nothing is ever left unwritten anyway.
                 VkDescriptorBindingFlags bindingFlags = 0;
-                if (b.count > 1) {
+                if (b.count > 1 && m_Device.Caps().descriptorIndexing) {
                     bindingFlags |= VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-                    if (b.type == BindingType::SampledTexture)
+                    if (b.type == BindingType::SampledTexture && m_Device.Caps().updateAfterBind)
                         bindingFlags |= VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
                 }
                 flags.push_back(bindingFlags);
@@ -376,7 +378,8 @@ namespace hearth {
             flagsInfo.pBindingFlags = flags.data();
 
             VkDescriptorSetLayoutCreateInfo info{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-            info.pNext        = &flagsInfo;
+            // The flags struct itself is a 1.2 / VK_EXT_descriptor_indexing addition.
+            info.pNext        = m_Device.Caps().descriptorIndexing ? &flagsInfo : nullptr;
             info.flags        = updateAfterBind
                               ? VkDescriptorSetLayoutCreateFlags{
                                     VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT }
@@ -536,7 +539,15 @@ namespace hearth {
         rendering.depthAttachmentFormat   = ToVk(desc.depthFormat);
 
         VkGraphicsPipelineCreateInfo info{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-        info.pNext = &rendering;
+        if (m_Device.Caps().dynamicRendering) {
+            info.pNext = &rendering;
+        } else {
+            // Any render pass with these formats and this sample count is compatible with the
+            // one the pipeline is used in, whatever its load ops.
+            info.renderPass = m_Device.RenderPassFor(colorFormats, ToVk(desc.depthFormat),
+                                                     desc.samples ? desc.samples : 1, LoadOp::Clear);
+            info.subpass = 0;
+        }
         info.stageCount = 2;
         info.pStages = stages;
         info.pVertexInputState = &vertexInput;
@@ -789,6 +800,8 @@ namespace hearth {
 
     // Everything but the sampleable colour textures, which Resize keeps and Build rebuilds.
     void VulkanRenderTarget::DestroyImages() {
+        if (m_Framebuffer) vkDestroyFramebuffer(m_Device.Raw(), m_Framebuffer, nullptr);
+        m_Framebuffer = VK_NULL_HANDLE;
         for (Attachment& attachment : m_Color) {
             if (attachment.msaaView)
                 vkDestroyImageView(m_Device.Raw(), attachment.msaaView, nullptr);
@@ -825,6 +838,28 @@ namespace hearth {
         HEARTH_ASSERT(index < m_Color.size(), "attachment {} of '{}', which has {}", index,
                       m_Desc.debugName, m_Color.size());
         return m_Color[index].resolve;
+    }
+
+    VkFramebuffer VulkanRenderTarget::Framebuffer() {
+        if (m_Framebuffer) return m_Framebuffer;
+        std::vector<VkFormat> formats;
+        for (Format f : m_Desc.colorFormats) formats.push_back(ToVk(f));
+        std::vector<VkImageView> views;
+        for (u32 i = 0; i < m_Color.size(); ++i) views.push_back(ColorView(i));
+        if (m_Samples != VK_SAMPLE_COUNT_1_BIT)
+            for (u32 i = 0; i < m_Color.size(); ++i) views.push_back(ResolveView(i));
+        if (m_DepthView) views.push_back(m_DepthView);
+
+        VkFramebufferCreateInfo info{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+        info.renderPass = m_Device.RenderPassFor(formats, ToVk(m_Desc.depthFormat),
+                                                 m_Desc.samples, LoadOp::Clear);
+        info.attachmentCount = static_cast<u32>(views.size());
+        info.pAttachments = views.data();
+        info.width = m_Desc.width;
+        info.height = m_Desc.height;
+        info.layers = 1;
+        HEARTH_VK_CHECK(vkCreateFramebuffer(m_Device.Raw(), &info, nullptr, &m_Framebuffer));
+        return m_Framebuffer;
     }
 
     VkImageView VulkanRenderTarget::ColorView(u32 index) const {

@@ -20,8 +20,7 @@ namespace hearth {
         }
 
         if (loader < kMinimumApiVersion) {
-            HEARTH_ERROR("the Vulkan loader on this machine is {}.{}; hearth needs at least {}.{} "
-                         "for dynamic rendering and synchronization2",
+            HEARTH_ERROR("the Vulkan loader on this machine is {}.{}; hearth needs at least {}.{}",
                          VK_API_VERSION_MAJOR(loader), VK_API_VERSION_MINOR(loader),
                          VK_API_VERSION_MAJOR(kMinimumApiVersion),
                          VK_API_VERSION_MINOR(kMinimumApiVersion));

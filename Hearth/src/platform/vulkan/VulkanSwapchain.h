@@ -25,6 +25,8 @@ namespace hearth {
         VkImage     Image(u32 i) const { return m_Images[i]; }
         VkImageView View(u32 i)  const { return m_Views[i]; }
         VkSemaphore RenderFinished(u32 i) const { return m_RenderFinished[i]; }
+        // The render-pass path's framebuffer for image i, made on first use.
+        VkFramebuffer Framebuffer(u32 i);
         u32  ImageCount() const { return static_cast<u32>(m_Images.size()); }
         bool Valid() const { return m_Swapchain != VK_NULL_HANDLE && m_Width > 0 && m_Height > 0; }
 
@@ -45,6 +47,7 @@ namespace hearth {
         // belongs to the image being presented, and with two frames over three images a per-frame
         // semaphore gets signalled twice while an older present is still pending.
         std::vector<VkSemaphore> m_RenderFinished;
+        std::vector<VkFramebuffer> m_Framebuffers;
     };
 
 }

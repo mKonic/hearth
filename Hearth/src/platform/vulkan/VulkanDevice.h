@@ -20,6 +20,15 @@ namespace hearth {
         ~VulkanDevice() override;
 
         bool Ok() const { return m_Ok; }
+        const DeviceError& Error() const { return m_Error; }
+
+        // vkCmdBeginRendering / vkCmdEndRendering, or their KHR aliases on a pre-1.3 driver.
+        // Null when the device records classic render passes instead.
+        struct RenderingFns {
+            PFN_vkCmdBeginRendering begin = nullptr;
+            PFN_vkCmdEndRendering   end = nullptr;
+        };
+        const RenderingFns& Rendering() const { return m_RenderingFns; }
 
         const DeviceCaps& Caps() const override { return m_Caps; }
         Swapchain* GetSwapchain() override;
@@ -79,6 +88,9 @@ namespace hearth {
         VkSampler SamplerFor(Filter minFilter, Filter magFilter, AddressMode address,
                              u32 mipLevels, f32 maxAnisotropy);
 
+        VkRenderPass RenderPassFor(const std::vector<VkFormat>& colors, VkFormat depth,
+                                   u32 samples, LoadOp load);
+
         // Advanced whenever any texture's image is replaced, so a bind group can tell in one
         // comparison whether anything it holds might be stale.
         u64  ResourceEpoch() const { return m_ResourceEpoch.load(std::memory_order_acquire); }
@@ -86,6 +98,8 @@ namespace hearth {
 
     private:
         bool InitVulkan(const DeviceDesc&);
+        bool Fail(DeviceErrorCode code, std::string message, std::vector<std::string> missing = {});
+        std::vector<std::string> DescribeMissing(u32 floor, bool needIndexing) const;
         bool InitAllocator();
         void InitPipelineCache(const std::string& path);
         void SavePipelineCache();
@@ -131,6 +145,15 @@ namespace hearth {
         Scope<VulkanCommandList> m_CommandList;
         Scope<VulkanCommandList> m_ImmediateList;
 
+        struct RenderPassKey {
+            std::vector<VkFormat> colors;
+            VkFormat depth = VK_FORMAT_UNDEFINED;
+            u32 samples = 1;
+            LoadOp load = LoadOp::Clear;
+        };
+        std::vector<std::pair<RenderPassKey, VkRenderPass>> m_RenderPasses;
+        std::mutex m_RenderPassMutex;
+
         std::unordered_map<u32, VkSampler> m_Samplers;
         std::mutex m_SamplerMutex;
         // Guards the pool chain: an allocation can append a pool, which reallocates the vector
@@ -151,6 +174,8 @@ namespace hearth {
 
         u32 m_ApiVersion = 0;
         DeviceCaps m_Caps;
+        DeviceError m_Error;
+        RenderingFns m_RenderingFns;
         std::atomic<u64> m_ResourceEpoch{ 1 };
     };
 
