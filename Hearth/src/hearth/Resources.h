@@ -91,6 +91,10 @@ namespace hearth {
         BlendMode blend = BlendMode::AlphaStraight;
         bool depthTest = false;
         bool depthWrite = false;
+        CompareOp depthCompare = CompareOp::LessOrEqual;
+        DepthBias depthBias;
+        CullMode cull = CullMode::None;
+        FrontFace frontFace = FrontFace::CounterClockwise;
         // Attachment formats, in order, and they must match the target this pipeline renders
         // into. With dynamic rendering there is no VkRenderPass to check against, so a
         // mismatch is a validation error at draw time rather than at creation. One entry is
@@ -100,6 +104,9 @@ namespace hearth {
 
         // Must equal the sample count of the target. 1 is no multisampling.
         u32 samples = 1;
+        // Turns fragment alpha into sample coverage, so an edge cut out with alpha (a rounded
+        // card corner, foliage) antialiases under MSAA instead of stepping. Needs samples > 1.
+        bool alphaToCoverage = false;
 
         std::string debugName;
     };

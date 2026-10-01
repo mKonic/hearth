@@ -91,6 +91,7 @@ int main() {
     RunResourceTests();
     RunRenderTests();
     RunFeatureTests();
+    RunPipelineStateTests();
     RunComputeTests();
     RunSystemTests();
 

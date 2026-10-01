@@ -34,6 +34,7 @@ namespace hearth {
 
         CommandList* BeginFrame() override;
         void EndFrame() override;
+        u32 FrameIndex() const override { return m_FrameIndex; }
         void WaitIdle() override;
         void SubmitImmediate(const std::function<void(CommandList&)>& record) override;
 

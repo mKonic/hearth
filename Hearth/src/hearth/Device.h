@@ -47,6 +47,8 @@ namespace hearth {
         // constant -- it is a device property, and a renderer that hardcodes 32 either wastes the
         // hardware or fails to create a pipeline on something smaller.
         u32 maxTexturesPerBindGroup = 0;
+        // Whether DepthBias::clamp is honoured.
+        bool depthBiasClamp = false;
         u32 framesInFlight = 2;
 
         // Core features present beyond hearth's 1.3 floor. Reported so a consumer can branch
@@ -137,6 +139,10 @@ namespace hearth {
         // or the surface is gone. Record nothing in that case and do not call EndFrame.
         virtual CommandList* BeginFrame() = 0;
         virtual void EndFrame() = 0;
+        // Which of the Caps().framesInFlight slots the open frame uses. BeginFrame waits for
+        // that slot's previous frame to retire, so per-frame data indexed by this (a dynamic
+        // vertex buffer, a uniform buffer) is safe to rewrite once BeginFrame returns non-null.
+        virtual u32 FrameIndex() const = 0;
         virtual void WaitIdle() = 0;
 
         // Records and submits work outside the frame loop, blocking until the GPU retires it.

@@ -174,6 +174,33 @@ namespace hearth {
     // ALL_COMMANDS on both sides is heavier than a hand-tuned mask. It is also correct for every
     // transition a 2D renderer performs, and these happen a handful of times per frame at most --
     // the pipeline bubble costs less than one missed barrier costs to find.
+    VkCullModeFlags ToVk(CullMode m) {
+        switch (m) {
+            case CullMode::None:  return VK_CULL_MODE_NONE;
+            case CullMode::Back:  return VK_CULL_MODE_BACK_BIT;
+            case CullMode::Front: return VK_CULL_MODE_FRONT_BIT;
+        }
+        return VK_CULL_MODE_NONE;
+    }
+
+    VkFrontFace ToVk(FrontFace f) {
+        return f == FrontFace::Clockwise ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    }
+
+    VkCompareOp ToVk(CompareOp op) {
+        switch (op) {
+            case CompareOp::Never:          return VK_COMPARE_OP_NEVER;
+            case CompareOp::Less:           return VK_COMPARE_OP_LESS;
+            case CompareOp::Equal:          return VK_COMPARE_OP_EQUAL;
+            case CompareOp::LessOrEqual:    return VK_COMPARE_OP_LESS_OR_EQUAL;
+            case CompareOp::Greater:        return VK_COMPARE_OP_GREATER;
+            case CompareOp::NotEqual:       return VK_COMPARE_OP_NOT_EQUAL;
+            case CompareOp::GreaterOrEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+            case CompareOp::Always:         return VK_COMPARE_OP_ALWAYS;
+        }
+        return VK_COMPARE_OP_LESS_OR_EQUAL;
+    }
+
     void TransitionImageRaw(VkCommandBuffer cmd, VkImage image,
                             VkImageLayout from, VkImageLayout to,
                             VkImageAspectFlags aspect) {

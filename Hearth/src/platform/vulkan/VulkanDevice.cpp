@@ -198,6 +198,9 @@ namespace hearth {
         VkPhysicalDeviceFeatures optionalCore{};
         optionalCore.samplerAnisotropy = VK_TRUE;
         const bool anisotropy = chosen.enable_features_if_present(optionalCore);
+        VkPhysicalDeviceFeatures biasClamp{};
+        biasClamp.depthBiasClamp = VK_TRUE;
+        m_Caps.depthBiasClamp = chosen.enable_features_if_present(biasClamp);
 
         VkPhysicalDeviceProperties selected{};
         vkGetPhysicalDeviceProperties(chosen.physical_device, &selected);

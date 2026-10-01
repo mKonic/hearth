@@ -58,6 +58,26 @@ namespace hearth {
 
     enum class LoadOp : u8 { Load, Clear, DontCare };
 
+    // Which faces a pipeline drops. None is the default because 2D geometry is single-sided and
+    // a sprite flipped by a negative scale must still draw; closed 3D meshes want Back.
+    enum class CullMode : u8 { None, Back, Front };
+    // Winding in framebuffer space, where +y points down.
+    enum class FrontFace : u8 { CounterClockwise, Clockwise };
+
+    enum class CompareOp : u8 { Never, Less, Equal, LessOrEqual, Greater, NotEqual, GreaterOrEqual, Always };
+
+    // Pushes a primitive's depth away from (positive) or toward (negative) the viewer before the
+    // test: what keeps a decal or a shadow lying on a surface out of z-fighting with it.
+    // `constant` is in the depth format's smallest resolvable step, `slope` scales with the
+    // primitive's depth slope. `clamp` caps the total; it needs Caps().depthBiasClamp and is
+    // ignored without it.
+    struct DepthBias {
+        f32 constant = 0.0f;
+        f32 slope = 0.0f;
+        f32 clamp = 0.0f;
+        bool Enabled() const { return constant != 0.0f || slope != 0.0f; }
+    };
+
     enum class BindingType : u8 { UniformBuffer, StorageBuffer, SampledTexture, StorageTexture };
 
     enum class IndexType : u8 { U16, U32 };

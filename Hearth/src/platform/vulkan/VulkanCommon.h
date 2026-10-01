@@ -31,6 +31,9 @@ namespace hearth {
     VkShaderStageFlags    ToVkStageFlags(u8 stageBits);
     VkDescriptorType      ToVk(BindingType t);
     VkIndexType           ToVk(IndexType t);
+    VkCullModeFlags       ToVk(CullMode m);
+    VkFrontFace           ToVk(FrontFace f);
+    VkCompareOp           ToVk(CompareOp op);
 
     VkPipelineColorBlendAttachmentState BlendState(BlendMode mode);
 

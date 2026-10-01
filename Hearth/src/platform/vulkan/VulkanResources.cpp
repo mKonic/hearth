@@ -471,20 +471,32 @@ namespace hearth {
         VkPipelineRasterizationStateCreateInfo raster{
             VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
         raster.polygonMode = VK_POLYGON_MODE_FILL;
-        raster.cullMode    = VK_CULL_MODE_NONE;   // 2D geometry is single-sided
-        raster.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        raster.cullMode    = ToVk(desc.cull);
+        raster.frontFace   = ToVk(desc.frontFace);
         raster.lineWidth   = 1.0f;
+        if (desc.depthBias.Enabled()) {
+            raster.depthBiasEnable         = VK_TRUE;
+            raster.depthBiasConstantFactor = desc.depthBias.constant;
+            raster.depthBiasSlopeFactor    = desc.depthBias.slope;
+            // Without the feature the clamp must be exactly zero, so it is dropped rather than
+            // failing pipeline creation over a refinement.
+            raster.depthBiasClamp = m_Device.Caps().depthBiasClamp ? desc.depthBias.clamp : 0.0f;
+        }
 
         VkPipelineMultisampleStateCreateInfo multisample{
             VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
         multisample.rasterizationSamples =
             static_cast<VkSampleCountFlagBits>(desc.samples ? desc.samples : 1);
+        HEARTH_ASSERT(!desc.alphaToCoverage || desc.samples > 1,
+                      "pipeline '{}' asks for alpha to coverage with one sample: there is no "
+                      "coverage to vary", desc.debugName);
+        multisample.alphaToCoverageEnable = desc.alphaToCoverage ? VK_TRUE : VK_FALSE;
 
         VkPipelineDepthStencilStateCreateInfo depth{
             VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
         depth.depthTestEnable  = desc.depthTest  ? VK_TRUE : VK_FALSE;
         depth.depthWriteEnable = desc.depthWrite ? VK_TRUE : VK_FALSE;
-        depth.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depth.depthCompareOp   = ToVk(desc.depthCompare);
 
         // One blend state, replicated across every attachment: a pipeline writing several
         // targets blends them the same way, and per-attachment blending is a knob nothing
