@@ -28,13 +28,15 @@ Ref<Buffer> Quad(f32 r, f32 g, f32 b, f32 a) {
 }
 
 PipelineDesc Base(Format depth = Format::Undefined, u32 samples = 1) {
-    static Ref<Shader> vert = Make(std::begin(kDepthVert), std::end(kDepthVert),
-                                   ShaderStage::Vertex, "depth.vert");
-    static Ref<Shader> frag = Make(std::begin(kFlatFrag), std::end(kFlatFrag),
-                                   ShaderStage::Fragment, "flat.frag");
+    // Leaked, like the device: a static destructor would call Vulkan at exit, after the
+    // validation layer has torn down its own state.
+    static Ref<Shader>* vert = new Ref<Shader>(Make(std::begin(kDepthVert), std::end(kDepthVert),
+                                                    ShaderStage::Vertex, "depth.vert"));
+    static Ref<Shader>* frag = new Ref<Shader>(Make(std::begin(kFlatFrag), std::end(kFlatFrag),
+                                                    ShaderStage::Fragment, "flat.frag"));
     PipelineDesc desc;
-    desc.vertex = vert;
-    desc.fragment = frag;
+    desc.vertex = *vert;
+    desc.fragment = *frag;
     desc.vertexBuffers = { VertexBufferLayout{
         .stride = sizeof(FlatVertex),
         .attributes = { { 0, Format::RG32_SFLOAT, 0 }, { 1, Format::RGBA32_SFLOAT, 8 } } } };

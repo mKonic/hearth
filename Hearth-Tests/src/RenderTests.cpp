@@ -24,21 +24,23 @@ struct FlatPush {
 };
 
 Ref<Shader> FlatVert() {
-    static Ref<Shader> shader = Gpu().CreateShader(ShaderDesc{
+    // Leaked: a static destructor would call Vulkan at exit, after the layers are gone.
+    static Ref<Shader>* shader = new Ref<Shader>(Gpu().CreateShader(ShaderDesc{
         .spirv = std::vector<u32>(std::begin(kFlatVert), std::end(kFlatVert)),
         .stage = ShaderStage::Vertex,
         .debugName = "flat.vert",
-    });
-    return shader;
+    }));
+    return *shader;
 }
 
 Ref<Shader> FlatFrag() {
-    static Ref<Shader> shader = Gpu().CreateShader(ShaderDesc{
+    // Leaked: a static destructor would call Vulkan at exit, after the layers are gone.
+    static Ref<Shader>* shader = new Ref<Shader>(Gpu().CreateShader(ShaderDesc{
         .spirv = std::vector<u32>(std::begin(kFlatFrag), std::end(kFlatFrag)),
         .stage = ShaderStage::Fragment,
         .debugName = "flat.frag",
-    });
-    return shader;
+    }));
+    return *shader;
 }
 
 Ref<Pipeline> FlatPipeline(BlendMode blend) {
