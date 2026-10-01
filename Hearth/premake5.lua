@@ -41,6 +41,15 @@ project "Hearth"
       pic "On"
       systemversion "latest"
 
+   -- An Android app is a shared library, so everything linked into it must be PIC. The
+   -- platform defines are what vk-bootstrap reads to enable the surface extension.
+   filter "system:android"
+      pic "On"
+      defines { "VK_USE_PLATFORM_ANDROID_KHR" }
+
+   filter "system:macosx or system:ios"
+      defines { "VK_USE_PLATFORM_METAL_EXT" }
+
    filter "configurations:Debug"
       runtime "Debug"
       symbols "on"

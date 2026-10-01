@@ -2,6 +2,10 @@ bin/
 bin-int/
 *.make
 Makefile
+*.sln
+*.vcxproj*
+*.xcodeproj/
+*.xcworkspace/
 .vs/
 .vscode/
 compile_commands.json
