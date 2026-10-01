@@ -54,7 +54,7 @@ void RunComputeTests() {
             // Workgroups, not invocations: 1000 items at 64 per group is 16 groups, and the
             // shader itself discards the 24-item tail of the last one.
             cmd.Dispatch((kCount + kLocalSize - 1) / kLocalSize);
-            cmd.MemoryBarrier();
+            cmd.FullBarrier();
         });
 
         bool allCorrect = true;
@@ -81,7 +81,7 @@ void RunComputeTests() {
             cmd.BindBindGroup(tailGroup);
             cmd.SetPushConstants(&tailPush, sizeof(tailPush));
             cmd.Dispatch(2);                // 128 invocations over a 100-item bound
-            cmd.MemoryBarrier();
+            cmd.FullBarrier();
         });
         CHECK(tailMapped[99] == 99);
         CHECK_MSG(tailMapped[100] == 0xABCDEF01,
@@ -124,7 +124,7 @@ void RunComputeTests() {
             cmd.BindBindGroup(group);
             cmd.SetPushConstants(&push, sizeof(push));
             cmd.Dispatch(kSize / 8, kSize / 8);      // local_size is 8x8
-            cmd.MemoryBarrier();
+            cmd.FullBarrier();
         });
 
         // Read it back by sampling it through the textured pipeline, which is the path a real

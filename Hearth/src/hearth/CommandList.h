@@ -44,8 +44,9 @@ namespace hearth {
         // Deliberately conservative -- it names every access type rather than asking a caller
         // to work out which stages to pair, because getting that wrong produces a result that
         // is correct on the machine it was written on and garbage elsewhere. Between a compute
-        // dispatch and the draw that reads its output, this is the call.
-        virtual void MemoryBarrier() = 0;
+        // dispatch and the draw that reads its output, this is the call. Not called
+        // MemoryBarrier: <windows.h> defines that name as a macro.
+        virtual void FullBarrier() = 0;
     };
 
 }

@@ -265,7 +265,7 @@ namespace hearth {
     // barrier is a pipeline bubble -- the cost of a too-narrow one is a result that is right
     // on the machine it was written on. hearth/vulkan/Native.h is there for anyone who has
     // measured this and wants the precise masks.
-    void VulkanCommandList::MemoryBarrier() {
+    void VulkanCommandList::FullBarrier() {
         VkMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
         barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
         barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
