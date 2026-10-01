@@ -166,6 +166,7 @@ namespace hearth {
         // The image a render pass actually writes: the multisampled one when there is one.
         VkImage ColorImage(u32 index) const;
         VkImageView DepthView() const { return m_DepthView; }
+        VkImage DepthImage() const { return m_DepthImage; }
         VkSampleCountFlagBits Samples() const { return m_Samples; }
         const RenderTargetDesc& Desc() const { return m_Desc; }
 

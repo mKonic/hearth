@@ -106,6 +106,19 @@ namespace hearth {
             }
 
             depthView = m_CurrentTarget->DepthView();
+            // Depth is cleared by every pass, so its old contents never matter: from UNDEFINED,
+            // waiting on the previous pass's depth writes.
+            if (depthView) {
+                Barrier(m_CurrentTarget->DepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
+                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+                            | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                            | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_IMAGE_ASPECT_DEPTH_BIT);
+            }
             width     = m_CurrentTarget->Width();
             height    = m_CurrentTarget->Height();
         } else {
@@ -137,7 +150,7 @@ namespace hearth {
 
         VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
         depth.imageView   = depthView;
-        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depth.loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
         depth.clearValue.depthStencil = { desc.clearDepth, 0 };
