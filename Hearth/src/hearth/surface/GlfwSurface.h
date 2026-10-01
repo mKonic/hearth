@@ -8,6 +8,11 @@
 
 #include "hearth/Surface.h"
 
+// Vulkan, not OpenGL: without this glfw3.h pulls in <GL/gl.h>, which a machine with only Vulkan
+// development headers does not have.
+#ifndef GLFW_INCLUDE_NONE
+    #define GLFW_INCLUDE_NONE
+#endif
 #include <GLFW/glfw3.h>
 
 namespace hearth {
