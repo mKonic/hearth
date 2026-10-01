@@ -666,7 +666,20 @@ namespace hearth {
             present.pImageIndices = &m_ImageIndex;
 
             const VkResult presented = vkQueuePresentKHR(m_GraphicsQueue, &present);
-            if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR) {
+            // SUBOPTIMAL alone is not a reason to rebuild: Android reports it on every present
+            // while the compositor rotates for us (an IDENTITY preTransform on a turned
+            // display), and rebuilding would not change that. Rebuild when the size moved.
+            bool sizeChanged = presented == VK_ERROR_OUT_OF_DATE_KHR;
+            if (presented == VK_SUBOPTIMAL_KHR) {
+                VkSurfaceCapabilitiesKHR caps{};
+                if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_Physical, m_VkSurface, &caps) == VK_SUCCESS
+                    && caps.currentExtent.width != UINT32_MAX)
+                    sizeChanged = caps.currentExtent.width != m_Swapchain->Width()
+                               || caps.currentExtent.height != m_Swapchain->Height();
+                else
+                    sizeChanged = true;
+            }
+            if (sizeChanged) {
                 u32 width = 0, height = 0;
                 FramebufferSize(width, height);
                 m_Swapchain->Resize(width, height);

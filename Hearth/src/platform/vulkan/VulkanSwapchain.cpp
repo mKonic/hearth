@@ -30,6 +30,13 @@ namespace hearth {
             .set_desired_present_mode(m_VSync ? VK_PRESENT_MODE_FIFO_KHR
                                               : VK_PRESENT_MODE_IMMEDIATE_KHR)
             .set_desired_extent(width, height)
+            // The image is laid out the way the window is, and the compositor turns it if the
+            // display is turned (a landscape app on a portrait phone). vk-bootstrap's default
+            // here is the surface's currentTransform, which promises the frames arrive already
+            // rotated -- and nothing here rotates them, so Android showed the landscape image
+            // squeezed into the panel's portrait shape. Pre-rotating in the app is faster still,
+            // but needs the extent swapped and the transform passed to the renderer.
+            .set_pre_transform_flags(VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
             // Lets a frame be copied out of the swapchain: a screenshot, a thumbnail.
             .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                                  | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
