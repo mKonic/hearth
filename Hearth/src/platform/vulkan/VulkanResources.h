@@ -52,7 +52,13 @@ namespace hearth {
         VkImageLayout Layout()  const { return m_Layout; }
         void SetLayout(VkImageLayout layout) { m_Layout = layout; }
 
+        // New image, same object. Bumps Generation() so bind groups holding it rewrite their
+        // descriptors before their next bind.
+        void Rebuild(u32 width, u32 height);
+        u32 Generation() const { return m_Generation; }
+
     private:
+        void Create();
         // Copies `pixels` into `layer`, then rebuilds the mip chain for that layer if there
         // is one. Both upload paths funnel here.
         void UploadInto(const void* pixels, u32 x, u32 y, u32 w, u32 h, u32 layer);
@@ -68,6 +74,7 @@ namespace hearth {
         VmaAllocation m_Allocation = nullptr;
         VkImageLayout m_Layout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool          m_Owned = true;
+        u32           m_Generation = 0;
     };
 
     class VulkanShader final : public Shader {
@@ -134,6 +141,8 @@ namespace hearth {
         ~VulkanBindGroup() override;
 
         void Update(const std::vector<BindGroupEntry>& entries) override;
+        // Rewrites the descriptors if a texture in them was rebuilt (a resized render target).
+        void Refresh();
 
         VkDescriptorSet  Raw() const { return m_Set; }
         VkPipelineLayout Layout() const { return m_PipelineLayout; }
@@ -144,6 +153,10 @@ namespace hearth {
         VulkanDevice::DescriptorAllocation m_Allocation{};
         VkDescriptorSet  m_Set = VK_NULL_HANDLE;
         VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
+        // What was last written, so a rebuilt texture can be written again.
+        std::vector<BindGroupEntry> m_Entries;
+        std::vector<u32> m_Generations;
+        u64 m_Epoch = 0;
     };
 
     class VulkanRenderTarget final : public RenderTarget {
@@ -172,6 +185,7 @@ namespace hearth {
 
     private:
         void Build();
+        void DestroyImages();
         void Destroy();
 
         // One colour attachment: the sampleable image, plus the multisampled one that

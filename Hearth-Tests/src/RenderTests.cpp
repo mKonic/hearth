@@ -344,6 +344,38 @@ void RunRenderTests() {
             .binding = 0, .type = BindingType::SampledTexture,
             .textures = { magenta, blue } } });
         CheckPixel(At(sample(0), 4, 2, 2), 255, 0, 255, 255, 2, "slot 0 after Update is magenta");
+
+        Section("render target resize");
+
+        // A target sampled through a bind group, then resized and redrawn. The texture object
+        // must survive the resize and the group must follow the new image without being
+        // rebuilt -- the old image is destroyed, so a stale descriptor is a validation error.
+        RenderTargetDesc sourceDesc;
+        sourceDesc.width = sourceDesc.height = 4;
+        sourceDesc.colorFormats = { Format::RGBA8_UNORM };
+        sourceDesc.debugName = "resized-source";
+        auto source = Gpu().CreateRenderTarget(sourceDesc);
+        auto fill = [&](Color colour) {
+            Gpu().SubmitImmediate([&](CommandList& cmd) {
+                RenderPassDesc pass;
+                pass.target = source.get();
+                pass.clearColor = colour;
+                cmd.BeginRenderPass(pass);
+                cmd.EndRenderPass();
+            });
+        };
+
+        const Ref<Texture> before = source->ColorTexture();
+        group->Update({ BindGroupEntry{
+            .binding = 0, .type = BindingType::SampledTexture, .textures = { before } } });
+        fill(Color{ 1.0f, 0.0f, 0.0f, 1.0f });
+        CheckPixel(At(sample(0), 4, 2, 2), 255, 0, 0, 255, 2, "target sampled before resize");
+
+        source->Resize(16, 8);
+        fill(Color{ 0.0f, 1.0f, 0.0f, 1.0f });
+        CHECK(source->ColorTexture().get() == before.get());
+        CHECK(before->Width() == 16 && before->Height() == 8);
+        CheckPixel(At(sample(0), 4, 2, 2), 0, 255, 0, 255, 2, "same group after resize");
     }
 }
 

@@ -3,6 +3,7 @@
 #include "hearth/Device.h"
 #include "platform/vulkan/VulkanCommon.h"
 
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -78,6 +79,11 @@ namespace hearth {
         VkSampler SamplerFor(Filter minFilter, Filter magFilter, AddressMode address,
                              u32 mipLevels, f32 maxAnisotropy);
 
+        // Advanced whenever any texture's image is replaced, so a bind group can tell in one
+        // comparison whether anything it holds might be stale.
+        u64  ResourceEpoch() const { return m_ResourceEpoch.load(std::memory_order_acquire); }
+        void BumpResourceEpoch() { m_ResourceEpoch.fetch_add(1, std::memory_order_acq_rel); }
+
     private:
         bool InitVulkan(const DeviceDesc&);
         bool InitAllocator();
@@ -145,6 +151,7 @@ namespace hearth {
 
         u32 m_ApiVersion = 0;
         DeviceCaps m_Caps;
+        std::atomic<u64> m_ResourceEpoch{ 1 };
     };
 
 }

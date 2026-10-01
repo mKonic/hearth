@@ -210,6 +210,7 @@ namespace hearth {
         HEARTH_ASSERT(m_BoundPipeline, "BindBindGroup before a pipeline is bound: the bind "
                                        "point comes from the pipeline");
         auto* g = static_cast<VulkanBindGroup*>(group.get());
+        g->Refresh();
         VkDescriptorSet set = g->Raw();
         vkCmdBindDescriptorSets(m_Cmd, m_BoundPipeline->BindPoint(), g->Layout(),
                                 0, 1, &set, 0, nullptr);

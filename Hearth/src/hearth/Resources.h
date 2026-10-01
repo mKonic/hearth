@@ -170,6 +170,10 @@ namespace hearth {
         // is the resolve destination, not the multisampled image itself -- which is what a
         // caller wants, since a multisampled image cannot be sampled.
         virtual Ref<Texture> ColorTexture(u32 index = 0) const = 0;
+        // Contents are discarded. The Texture objects ColorTexture returns stay the same across
+        // a resize, and bind groups made from them follow the new images on their next bind, so
+        // nothing downstream has to be rebuilt. Call it between frames, not with a frame open
+        // that already used this target.
         virtual void Resize(u32 width, u32 height) = 0;
 
         // Copies an attachment back to CPU memory, tightly packed, in its own format -- so a

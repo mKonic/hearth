@@ -96,6 +96,30 @@ namespace hearth {
 
     VulkanTexture::VulkanTexture(VulkanDevice& device, const TextureDesc& desc)
         : m_Device(device), m_Desc(desc) {
+        Create();
+    }
+
+    // A render target's attachment is rebuilt in place on resize, so the Texture a caller holds
+    // (and the bind groups made from it) keep working. Contents are not preserved.
+    void VulkanTexture::Rebuild(u32 width, u32 height) {
+        HEARTH_ASSERT(m_Owned, "Rebuild on a texture that wraps an image it does not own");
+        // The new image is made before the old one is freed, so the two never share a handle
+        // value and a descriptor still naming the old one cannot alias the new one by accident.
+        const VkImageView oldView = m_View;
+        const VkImage oldImage = m_Image;
+        const VmaAllocation oldAllocation = m_Allocation;
+        m_Layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        m_Desc.width = width;
+        m_Desc.height = height;
+        Create();
+        if (oldView)  vkDestroyImageView(m_Device.Raw(), oldView, nullptr);
+        if (oldImage) vmaDestroyImage(m_Device.Allocator(), oldImage, oldAllocation);
+        ++m_Generation;
+        m_Device.BumpResourceEpoch();
+    }
+
+    void VulkanTexture::Create() {
+        const TextureDesc& desc = m_Desc;
         const bool depth  = IsDepthFormat(desc.format);
         const bool target = desc.usage != TextureUsage::Sampled;
         const u32  layers = LayerCount(desc);
@@ -573,7 +597,31 @@ namespace hearth {
         m_Device.FreeDescriptorSet(m_Allocation);
     }
 
+    namespace {
+        void CollectGenerations(const std::vector<BindGroupEntry>& entries, std::vector<u32>& out) {
+            out.clear();
+            for (const auto& entry : entries)
+                for (const auto& texture : entry.textures)
+                    out.push_back(static_cast<VulkanTexture*>(texture.get())->Generation());
+        }
+    }
+
+    void VulkanBindGroup::Refresh() {
+        // Cheap in the common case: nothing anywhere was rebuilt since this group was written.
+        if (m_Epoch == m_Device.ResourceEpoch()) return;
+        std::vector<u32> now;
+        CollectGenerations(m_Entries, now);
+        if (now != m_Generations) {
+            const std::vector<BindGroupEntry> entries = m_Entries;
+            Update(entries);
+        }
+        m_Epoch = m_Device.ResourceEpoch();
+    }
+
     void VulkanBindGroup::Update(const std::vector<BindGroupEntry>& entries) {
+        m_Entries = entries;
+        CollectGenerations(m_Entries, m_Generations);
+        m_Epoch = m_Device.ResourceEpoch();
         const auto& slots = m_Pipeline->Bindings();
 
         // Both info arrays are sized up front and never grown afterwards. The descriptor writes
@@ -694,7 +742,9 @@ namespace hearth {
             color.format    = m_Desc.colorFormats[i];
             color.usage     = TextureUsage::RenderTarget;
             color.debugName = m_Desc.debugName + "[" + std::to_string(i) + "]";
-            attachment.resolve = CreateRef<VulkanTexture>(m_Device, color);
+            // On a resize the texture object survives and only its image is replaced.
+            if (attachment.resolve) attachment.resolve->Rebuild(m_Desc.width, m_Desc.height);
+            else                    attachment.resolve = CreateRef<VulkanTexture>(m_Device, color);
 
             if (m_Samples == VK_SAMPLE_COUNT_1_BIT) continue;
 
@@ -753,16 +803,18 @@ namespace hearth {
         HEARTH_VK_CHECK(vkCreateImageView(m_Device.Raw(), &view, nullptr, &m_DepthView));
     }
 
-    void VulkanRenderTarget::Destroy() {
+    // Everything but the sampleable colour textures, which Resize keeps and Build rebuilds.
+    void VulkanRenderTarget::DestroyImages() {
         for (Attachment& attachment : m_Color) {
             if (attachment.msaaView)
                 vkDestroyImageView(m_Device.Raw(), attachment.msaaView, nullptr);
             if (attachment.msaaImage)
                 vmaDestroyImage(m_Device.Allocator(), attachment.msaaImage,
                                 attachment.msaaAllocation);
-            attachment.resolve.reset();
+            attachment.msaaView = VK_NULL_HANDLE;
+            attachment.msaaImage = VK_NULL_HANDLE;
+            attachment.msaaAllocation = nullptr;
         }
-        m_Color.clear();
 
         if (m_DepthView)  vkDestroyImageView(m_Device.Raw(), m_DepthView, nullptr);
         if (m_DepthImage) vmaDestroyImage(m_Device.Allocator(), m_DepthImage, m_DepthAllocation);
@@ -770,11 +822,16 @@ namespace hearth {
         m_DepthImage = VK_NULL_HANDLE;
     }
 
+    void VulkanRenderTarget::Destroy() {
+        DestroyImages();
+        m_Color.clear();
+    }
+
     void VulkanRenderTarget::Resize(u32 width, u32 height) {
         if (width == m_Desc.width && height == m_Desc.height) return;
         if (width == 0 || height == 0) return;
         m_Device.WaitIdle();
-        Destroy();
+        DestroyImages();
         m_Desc.width  = width;
         m_Desc.height = height;
         Build();
