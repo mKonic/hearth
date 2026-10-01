@@ -180,6 +180,11 @@ namespace hearth {
         VkImage ColorImage(u32 index) const;
         VkImageView DepthView() const { return m_DepthView; }
         VkImage DepthImage() const { return m_DepthImage; }
+        // Whether a pass has stored samples in attachment i's multisampled image since it was
+        // made, which is what decides whether a loading pass may keep them.
+        bool MsaaWritten(u32 i) const { return m_Color[i].msaaWritten; }
+        void SetMsaaWritten(u32 i) { m_Color[i].msaaWritten = true; }
+
         // The render-pass path's framebuffer over every attachment, made on first use.
         VkFramebuffer Framebuffer();
         VkSampleCountFlagBits Samples() const { return m_Samples; }
@@ -197,6 +202,7 @@ namespace hearth {
             VkImage       msaaImage = VK_NULL_HANDLE;
             VkImageView   msaaView = VK_NULL_HANDLE;
             VmaAllocation msaaAllocation = nullptr;
+            bool          msaaWritten = false;
         };
 
         VulkanDevice&           m_Device;

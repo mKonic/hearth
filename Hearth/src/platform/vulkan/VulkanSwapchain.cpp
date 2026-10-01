@@ -7,9 +7,54 @@
 namespace hearth {
 
     VulkanSwapchain::VulkanSwapchain(VulkanDevice& device, VkSurfaceKHR surface,
-                                     u32 width, u32 height, bool vsync)
-        : m_Device(device), m_Surface(surface), m_VSync(vsync) {
+                                     u32 width, u32 height, bool vsync,
+                                     Format depthFormat, u32 samples)
+        : m_Device(device), m_Surface(surface), m_VSync(vsync), m_DepthFormat(depthFormat),
+          m_Samples(device.Caps().SupportedSamples(samples ? samples : 1)) {
+        if (m_Samples != (samples ? samples : 1))
+            HEARTH_WARN("the swapchain asked for {}x MSAA; using {}x", samples, m_Samples);
         Build(width, height);
+    }
+
+    VulkanSwapchain::OwnedImage VulkanSwapchain::MakeImage(VkFormat format, VkImageUsageFlags usage,
+                                                           VkImageAspectFlags aspect) {
+        OwnedImage out;
+        VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        info.imageType   = VK_IMAGE_TYPE_2D;
+        info.format      = format;
+        info.extent      = { m_Width, m_Height, 1 };
+        info.mipLevels   = 1;
+        info.arrayLayers = 1;
+        info.samples     = static_cast<VkSampleCountFlagBits>(m_Samples);
+        info.tiling      = VK_IMAGE_TILING_OPTIMAL;
+        info.usage       = usage;
+        VmaAllocationCreateInfo alloc{};
+        alloc.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        HEARTH_VK_CHECK(vmaCreateImage(m_Device.Allocator(), &info, &alloc,
+                                       &out.image, &out.allocation, nullptr));
+        VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+        view.image    = out.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format   = format;
+        view.subresourceRange = { aspect, 0, 1, 0, 1 };
+        HEARTH_VK_CHECK(vkCreateImageView(m_Device.Raw(), &view, nullptr, &out.view));
+        return out;
+    }
+
+    void VulkanSwapchain::DestroyImage(OwnedImage& image) {
+        if (image.view)  vkDestroyImageView(m_Device.Raw(), image.view, nullptr);
+        if (image.image) vmaDestroyImage(m_Device.Allocator(), image.image, image.allocation);
+        image = {};
+    }
+
+    // Sized with the chain. The multisampled image is stored between passes, not transient:
+    // a second pass that loads must find the first pass's samples there.
+    void VulkanSwapchain::BuildAttachments() {
+        if (m_Samples > 1)
+            m_Msaa = MakeImage(m_Format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        if (m_DepthFormat != Format::Undefined)
+            m_Depth = MakeImage(ToVk(m_DepthFormat), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                VK_IMAGE_ASPECT_DEPTH_BIT);
     }
 
     VulkanSwapchain::~VulkanSwapchain() { Destroy(); }
@@ -60,6 +105,8 @@ namespace hearth {
         m_Images    = built.get_images().value();
         m_Views     = built.get_image_views().value();
 
+        BuildAttachments();
+
         m_RenderFinished.resize(m_Images.size());
         for (auto& semaphore : m_RenderFinished) {
             VkSemaphoreCreateInfo info{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
@@ -72,10 +119,16 @@ namespace hearth {
     VkFramebuffer VulkanSwapchain::Framebuffer(u32 i) {
         if (m_Framebuffers.size() != m_Images.size()) m_Framebuffers.assign(m_Images.size(), VK_NULL_HANDLE);
         if (m_Framebuffers[i]) return m_Framebuffers[i];
+        // Same order as RenderPassFor: colour, its resolve target, depth.
+        std::vector<VkImageView> views;
+        if (m_Msaa.view) { views.push_back(m_Msaa.view); views.push_back(m_Views[i]); }
+        else             views.push_back(m_Views[i]);
+        if (m_Depth.view) views.push_back(m_Depth.view);
         VkFramebufferCreateInfo info{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
-        info.renderPass = m_Device.RenderPassFor({ m_Format }, VK_FORMAT_UNDEFINED, 1, LoadOp::Clear);
-        info.attachmentCount = 1;
-        info.pAttachments = &m_Views[i];
+        info.renderPass = m_Device.RenderPassFor({ m_Format }, ToVk(m_DepthFormat), m_Samples,
+                                                 LoadOp::Clear);
+        info.attachmentCount = static_cast<u32>(views.size());
+        info.pAttachments = views.data();
         info.width = m_Width;
         info.height = m_Height;
         info.layers = 1;
@@ -86,6 +139,8 @@ namespace hearth {
     void VulkanSwapchain::Destroy() {
         for (auto fb : m_Framebuffers) if (fb) vkDestroyFramebuffer(m_Device.Raw(), fb, nullptr);
         m_Framebuffers.clear();
+        DestroyImage(m_Msaa);
+        DestroyImage(m_Depth);
         if (!m_Swapchain && m_Views.empty()) return;
         for (auto view : m_Views) vkDestroyImageView(m_Device.Raw(), view, nullptr);
         for (auto semaphore : m_RenderFinished) vkDestroySemaphore(m_Device.Raw(), semaphore, nullptr);

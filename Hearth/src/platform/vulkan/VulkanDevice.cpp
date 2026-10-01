@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 
 namespace hearth {
 
@@ -42,7 +43,8 @@ namespace hearth {
     }
 
     VulkanDevice::VulkanDevice(const DeviceDesc& desc)
-        : m_Surface(desc.surface), m_VSync(desc.vsync) {
+        : m_Surface(desc.surface), m_VSync(desc.vsync),
+          m_SwapchainDepth(desc.swapchainDepthFormat), m_SwapchainSamples(desc.swapchainSamples) {
         if (!InitVulkan(desc))   return;
         if (!InitAllocator())    return;
         if (!InitFrames())       return;
@@ -629,7 +631,8 @@ namespace hearth {
     bool VulkanDevice::BuildSwapchain() {
         u32 width = 0, height = 0;
         FramebufferSize(width, height);
-        m_Swapchain = CreateScope<VulkanSwapchain>(*this, m_VkSurface, width, height, m_VSync);
+        m_Swapchain = CreateScope<VulkanSwapchain>(*this, m_VkSurface, width, height, m_VSync,
+                                                   m_SwapchainDepth, m_SwapchainSamples);
         // A zero-sized surface is a minimized window, not a failure: the chain comes back when
         // the window does, and BeginFrame skips frames until then.
         if (!m_Swapchain->Valid() && width != 0 && height != 0) {
@@ -875,16 +878,35 @@ namespace hearth {
 
         // A frame that drew nothing into the swapchain still has to leave the image presentable,
         // or the present validates as a layout mismatch.
+        std::optional<VulkanBuffer> capture;
         if (m_Swapchain) {
-            const VkImageLayout from = m_CommandList->TouchedSwapchain()
-                                     ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-                                     : VK_IMAGE_LAYOUT_UNDEFINED;
-            ImageBarrier(frame.cmd, m_Swapchain->Image(m_ImageIndex), from,
-                         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VkImageLayout from = m_CommandList->TouchedSwapchain()
+                               ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                               : VK_IMAGE_LAYOUT_UNDEFINED;
+            const VkImage image = m_Swapchain->Image(m_ImageIndex);
+            const VkImageSubresourceRange colour{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+            if (m_CaptureRequest) {
+                const u64 bytes = u64(m_Swapchain->Width()) * m_Swapchain->Height()
+                                * FormatSize(m_Swapchain->ColorFormat());
+                capture.emplace(*this, BufferDesc{ bytes, BufferUsage::Staging,
+                                                   MemoryKind::HostVisible, "frame-capture" });
+                ImageBarrier(frame.cmd, image, from, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, colour);
+                VkBufferImageCopy copy{};
+                copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+                copy.imageExtent = { m_Swapchain->Width(), m_Swapchain->Height(), 1 };
+                vkCmdCopyImageToBuffer(frame.cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                       capture->Raw(), 1, &copy);
+                from = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            }
+
+            ImageBarrier(frame.cmd, image, from, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
-                         VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, colour);
         }
 
         HEARTH_VK_CHECK(vkEndCommandBuffer(frame.cmd));
@@ -904,6 +926,19 @@ namespace hearth {
             submit.pSignalSemaphores = &renderFinished;
         }
         HEARTH_VK_CHECK(vkQueueSubmit(m_GraphicsQueue, 1, &submit, frame.inFlight));
+
+        if (capture) {
+            HEARTH_VK_CHECK(vkWaitForFences(m_Device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX));
+            FrameCapture result;
+            result.width  = m_Swapchain->Width();
+            result.height = m_Swapchain->Height();
+            result.format = m_Swapchain->ColorFormat();
+            const auto* bytes = static_cast<const u8*>(capture->Map());
+            result.pixels.assign(bytes, bytes + capture->Size());
+            auto done = std::move(m_CaptureRequest);
+            m_CaptureRequest = nullptr;
+            done(result);
+        }
 
         if (m_Swapchain) {
             VkSwapchainKHR chain = m_Swapchain->Raw();
@@ -957,6 +992,10 @@ namespace hearth {
     }
 
     void VulkanDevice::WaitIdle() { if (m_Device) vkDeviceWaitIdle(m_Device); }
+
+    void VulkanDevice::CaptureNextFrame(std::function<void(const FrameCapture&)> done) {
+        m_CaptureRequest = std::move(done);
+    }
 
     void VulkanDevice::OnWindowResize(u32 width, u32 height) {
         if (m_Swapchain && !m_SurfaceGone) m_Swapchain->Resize(width, height);

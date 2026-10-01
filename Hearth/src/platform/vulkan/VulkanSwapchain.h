@@ -11,12 +11,22 @@ namespace hearth {
 
     class VulkanSwapchain final : public Swapchain {
     public:
-        VulkanSwapchain(VulkanDevice& device, VkSurfaceKHR surface, u32 width, u32 height, bool vsync);
+        VulkanSwapchain(VulkanDevice& device, VkSurfaceKHR surface, u32 width, u32 height, bool vsync,
+                        Format depthFormat, u32 samples);
         ~VulkanSwapchain() override;
 
         u32 Width()  const override { return m_Width; }
         u32 Height() const override { return m_Height; }
         Format ColorFormat() const override { return FromVk(m_Format); }
+        Format DepthFormat() const override { return m_DepthFormat; }
+        u32 Samples() const override { return m_Samples; }
+
+        // The multisampled colour image a pass draws into before resolving into the swapchain
+        // image; VK_NULL_HANDLE when Samples() is 1. Depth likewise when there is none.
+        VkImage     MsaaImage() const { return m_Msaa.image; }
+        VkImageView MsaaView()  const { return m_Msaa.view; }
+        VkImage     DepthImage() const { return m_Depth.image; }
+        VkImageView DepthView()  const { return m_Depth.view; }
 
         void Resize(u32 width, u32 height);
 
@@ -31,7 +41,16 @@ namespace hearth {
         bool Valid() const { return m_Swapchain != VK_NULL_HANDLE && m_Width > 0 && m_Height > 0; }
 
     private:
+        struct OwnedImage {
+            VkImage image = VK_NULL_HANDLE;
+            VkImageView view = VK_NULL_HANDLE;
+            VmaAllocation allocation = nullptr;
+        };
+
         void Build(u32 width, u32 height);
+        void BuildAttachments();
+        OwnedImage MakeImage(VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect);
+        void DestroyImage(OwnedImage& image);
         void Destroy();
 
         VulkanDevice&  m_Device;
@@ -40,6 +59,10 @@ namespace hearth {
         VkFormat       m_Format    = VK_FORMAT_UNDEFINED;
         u32  m_Width = 0, m_Height = 0;
         bool m_VSync = true;
+        Format m_DepthFormat = Format::Undefined;
+        u32  m_Samples = 1;
+        OwnedImage m_Msaa;
+        OwnedImage m_Depth;
 
         std::vector<VkImage>     m_Images;
         std::vector<VkImageView> m_Views;

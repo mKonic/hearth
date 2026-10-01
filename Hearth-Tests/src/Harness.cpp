@@ -98,6 +98,7 @@ int main() {
     RunRenderTests();
     RunFeatureTests();
     RunPipelineStateTests();
+    RunSwapchainTests();
     RunComputeTests();
     RunSystemTests();
 

@@ -68,12 +68,19 @@ namespace hearth {
                 // image from the one above. From UNDEFINED every pass on purpose: nothing
                 // ever reads it back, so there are no contents worth preserving and
                 // discarding them is what lets a tiler keep it on-chip.
+                // A pass that loads keeps the samples the last pass stored; any other pass
+                // starts from UNDEFINED, which lets a tiler skip reading them in.
                 if (VkImage msaa = m_CurrentTarget->ColorImage(i); msaa != color->Image()) {
-                    Barrier(msaa, VK_IMAGE_LAYOUT_UNDEFINED,
+                    const bool keep = desc.loadOp == LoadOp::Load && m_CurrentTarget->MsaaWritten(i);
+                    Barrier(msaa, keep ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                       : VK_IMAGE_LAYOUT_UNDEFINED,
                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                                | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                    m_CurrentTarget->SetMsaaWritten(i);
                 }
 
                 VkRenderingAttachmentInfo attachment{
@@ -117,22 +124,54 @@ namespace hearth {
                           "no swapchain to render into: this device was created headless, so "
                           "every render pass must name a target");
 
-            if (!m_TouchedSwapchain) {
-                Barrier(swapchain->Image(m_ImageIndex), VK_IMAGE_LAYOUT_UNDEFINED,
+            // The first pass of a frame takes the images from UNDEFINED; later passes in the
+            // same frame keep what the earlier ones stored, the multisampled image included.
+            const bool first = !m_TouchedSwapchain;
+            Barrier(swapchain->Image(m_ImageIndex),
+                    first ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    first ? 0 : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            if (VkImage msaa = swapchain->MsaaImage()) {
+                Barrier(msaa,
+                        first ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-                m_TouchedSwapchain = true;
+                        first ? 0 : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
             }
+            m_TouchedSwapchain = true;
 
             VkRenderingAttachmentInfo attachment{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-            attachment.imageView   = swapchain->View(m_ImageIndex);
             attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             attachment.loadOp      = loadOp;
             attachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
             attachment.clearValue.color = clear;
+            if (swapchain->MsaaView()) {
+                attachment.imageView          = swapchain->MsaaView();
+                attachment.resolveMode        = VK_RESOLVE_MODE_AVERAGE_BIT;
+                attachment.resolveImageView   = swapchain->View(m_ImageIndex);
+                attachment.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            } else {
+                attachment.imageView = swapchain->View(m_ImageIndex);
+            }
             colorAttachments.push_back(attachment);
+
+            depthView = swapchain->DepthView();
+            if (depthView) {
+                Barrier(swapchain->DepthImage(), VK_IMAGE_LAYOUT_UNDEFINED,
+                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                            | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                            | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_IMAGE_ASPECT_DEPTH_BIT);
+            }
 
             width  = swapchain->Width();
             height = swapchain->Height();
@@ -168,6 +207,8 @@ namespace hearth {
             } else {
                 auto* swapchain = m_Device.SwapchainImpl();
                 formats = { swapchain->VkColorFormat() };
+                depthFormat = ToVk(swapchain->DepthFormat());
+                samples = swapchain->Samples();
                 framebuffer = swapchain->Framebuffer(m_ImageIndex);
             }
 

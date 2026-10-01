@@ -744,8 +744,8 @@ namespace hearth {
             if (m_Samples == VK_SAMPLE_COUNT_1_BIT) continue;
 
             // The multisampled image is never sampled and never read back -- it exists only
-            // to be resolved into the one above. TRANSIENT lets a tiler keep it in on-chip
-            // memory and never write it out at all.
+            // to be resolved into the one above. Not TRANSIENT: a pass with LoadOp::Load picks
+            // up the samples the previous pass stored.
             VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
             info.imageType   = VK_IMAGE_TYPE_2D;
             info.format      = ToVk(m_Desc.colorFormats[i]);
@@ -754,8 +754,7 @@ namespace hearth {
             info.arrayLayers = 1;
             info.samples     = m_Samples;
             info.tiling      = VK_IMAGE_TILING_OPTIMAL;
-            info.usage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                             | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+            info.usage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
             VmaAllocationCreateInfo alloc{};
             alloc.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
@@ -811,6 +810,7 @@ namespace hearth {
             attachment.msaaView = VK_NULL_HANDLE;
             attachment.msaaImage = VK_NULL_HANDLE;
             attachment.msaaAllocation = nullptr;
+            attachment.msaaWritten = false;
         }
 
         if (m_DepthView)  vkDestroyImageView(m_Device.Raw(), m_DepthView, nullptr);

@@ -35,5 +35,6 @@ namespace hearth::tests {
     void RunComputeTests();
     void RunFeatureTests();
     void RunPipelineStateTests();
+    void RunSwapchainTests();
 
 }

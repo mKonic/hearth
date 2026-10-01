@@ -47,6 +47,7 @@ namespace hearth {
         u32 FrameIndex() const override { return m_FrameIndex; }
         void WaitIdle() override;
         void SubmitImmediate(const std::function<void(CommandList&)>& record) override;
+        void CaptureNextFrame(std::function<void(const FrameCapture&)> done) override;
 
         void OnWindowResize(u32 width, u32 height) override;
         void OnSurfaceLost() override;
@@ -167,6 +168,9 @@ namespace hearth {
         bool m_Ok         = false;
         bool m_Validation = false;
         bool m_VSync      = true;
+        Format m_SwapchainDepth = Format::Undefined;
+        u32  m_SwapchainSamples = 1;
+        std::function<void(const FrameCapture&)> m_CaptureRequest;
         bool m_DeviceLost = false;
         // Set between OnSurfaceLost and OnSurfaceRecreated. Distinct from a zero-sized swapchain:
         // there is no VkSurfaceKHR at all, so even a resize has nothing to rebuild against.

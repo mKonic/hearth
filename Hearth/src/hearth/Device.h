@@ -90,6 +90,18 @@ namespace hearth {
         virtual u32 Width()  const = 0;
         virtual u32 Height() const = 0;
         virtual Format ColorFormat() const = 0;
+        // What DeviceDesc::swapchainDepthFormat and swapchainSamples asked for, as granted.
+        // A pipeline drawn into the swapchain declares these two.
+        virtual Format DepthFormat() const = 0;
+        virtual u32 Samples() const = 0;
+    };
+
+    // One frame read back from the swapchain, tightly packed in the swapchain's own format
+    // (usually BGRA8_UNORM).
+    struct FrameCapture {
+        u32 width = 0, height = 0;
+        Format format = Format::Undefined;
+        std::vector<u8> pixels;
     };
 
     struct DeviceDesc {
@@ -108,6 +120,14 @@ namespace hearth {
         // Vulkan version, so VK_API_VERSION_1_3 rather than 3 or 13; 0 leaves hearth's floor
         // in place. CreateDevice fails with the reason when it cannot be met.
         u32 minimumApiVersion = 0;
+
+        // Depth and multisampling for passes that render straight into the swapchain
+        // (RenderPassDesc::target = nullptr). hearth owns the images, sizes them with the
+        // window and resolves into the presented image as each pass ends, so a 3D scene
+        // needs no offscreen target and composite pass of its own. Samples are rounded down
+        // to what the device supports; Swapchain::Samples() says what was granted.
+        Format swapchainDepthFormat = Format::Undefined;
+        u32 swapchainSamples = 1;
 
         // Refuse devices without descriptor indexing (DeviceCaps::descriptorIndexing) instead
         // of running without it. For a renderer whose shaders index texture arrays.
@@ -170,6 +190,12 @@ namespace hearth {
         // grab for a clip, a test that draws one image and reads it back. A render pass recorded
         // here must name a target; there is no swapchain image to default to.
         virtual void SubmitImmediate(const std::function<void(CommandList&)>& record) = 0;
+
+        // Copies the next presented frame back to the CPU and hands it to `done`, from inside
+        // that frame's EndFrame. EndFrame then waits for the GPU to finish the frame: a hitch,
+        // which is fine for a screenshot or a bug report and wrong for every frame. Nothing
+        // happens on a headless device or a frame that is skipped.
+        virtual void CaptureNextFrame(std::function<void(const FrameCapture&)> done) = 0;
 
         // --- surface lifecycle --------------------------------------------------------------
         // Resize is the easy one. The other two are Android, and they are why this trio is on the
