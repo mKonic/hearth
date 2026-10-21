@@ -168,11 +168,22 @@ namespace hearth {
         const std::vector<const char*> extra =
             m_Surface ? m_Surface->RequiredInstanceExtensions() : std::vector<const char*>{};
 
+        // A loader built without window-system support (an embedded image driving KMS itself)
+        // has no VK_KHR_surface, and vk-bootstrap would refuse to make an instance for want of
+        // it. Only there does a surfaceless device go fully headless: elsewhere it keeps the
+        // surface extensions so a window can still be attached to it later.
+        bool headless = false;
+        if (!m_Surface) {
+            auto systemInfo = vkb::SystemInfo::get_system_info();
+            headless = systemInfo && !systemInfo->is_extension_available(VK_KHR_SURFACE_EXTENSION_NAME);
+        }
+
         auto build = [&](bool validation) {
             vkb::InstanceBuilder builder;
             builder.set_app_name(desc.appName.c_str())
                    .set_engine_name(desc.engineName.c_str())
                    .require_api_version(instanceVersion);
+            if (headless) builder.set_headless();
             for (const char* ext : extra) builder.enable_extension(ext);
             if (validation)
                 builder.request_validation_layers(true).set_debug_callback(DebugCallback);
@@ -221,7 +232,7 @@ namespace hearth {
         selector.set_minimum_version(floor);
         if (desc.requireDescriptorIndexing) selector.add_required_extension_features(indexing);
         if (m_VkSurface) selector.set_surface(m_VkSurface);
-        else             selector.defer_surface_initialization();
+        else if (!headless) selector.defer_surface_initialization();  // else it enables VK_KHR_swapchain
 
         auto physical = selector.select();
         if (!physical) {
