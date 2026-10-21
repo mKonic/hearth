@@ -168,15 +168,10 @@ namespace hearth {
         const std::vector<const char*> extra =
             m_Surface ? m_Surface->RequiredInstanceExtensions() : std::vector<const char*>{};
 
-        // A loader built without window-system support (an embedded image driving KMS itself)
-        // has no VK_KHR_surface, and vk-bootstrap would refuse to make an instance for want of
-        // it. Only there does a surfaceless device go fully headless: elsewhere it keeps the
-        // surface extensions so a window can still be attached to it later.
+        // A surfaceless device keeps the surface extensions so a window can be attached later,
+        // and goes fully headless only when the loader has no window system to offer (an
+        // embedded image driving KMS itself), where vk-bootstrap would otherwise refuse.
         bool headless = false;
-        if (!m_Surface) {
-            auto systemInfo = vkb::SystemInfo::get_system_info();
-            headless = systemInfo && !systemInfo->is_extension_available(VK_KHR_SURFACE_EXTENSION_NAME);
-        }
 
         auto build = [&](bool validation) {
             vkb::InstanceBuilder builder;
@@ -191,6 +186,11 @@ namespace hearth {
         };
 
         auto result = build(m_Validation);
+        if (!result && !m_Surface
+            && result.error() == vkb::make_error_code(vkb::InstanceError::windowing_extensions_not_present)) {
+            headless = true;
+            result = build(m_Validation);
+        }
         if (!result && m_Validation) {
             // A machine with no validation layers installed is a normal machine, not a broken one,
             // and it should still run. Say so once and carry on without them.
