@@ -22,6 +22,7 @@ project "Hearth-Tests"
       "src",
       "%{IncludeDir.Hearth}",
       "%{IncludeDir.VulkanHeaders}",
+      "%{IncludeDir.VMA}",  -- hearth/vulkan/Native.h
    }
 
    links { "Hearth", "VulkanDeps", "%{Library.Vulkan}" }

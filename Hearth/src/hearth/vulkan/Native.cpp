@@ -46,6 +46,9 @@ namespace hearth::vk {
     VkPipelineLayout RawLayout(Pipeline& pipeline){ return static_cast<VulkanPipeline&>(pipeline).Layout(); }
     VkDescriptorSet  Raw(BindGroup& group)       { return static_cast<VulkanBindGroup&>(group).Raw(); }
 
+    VkImageLayout ImageLayout(Texture& texture) { return static_cast<VulkanTexture&>(texture).Layout(); }
+    void SetImageLayout(Texture& texture, VkImageLayout layout) { static_cast<VulkanTexture&>(texture).SetLayout(layout); }
+
     void TransitionImage(VkCommandBuffer cmd, VkImage image,
                          VkImageLayout from, VkImageLayout to, VkImageAspectFlags aspect) {
         TransitionImageRaw(cmd, image, from, to, aspect);

@@ -1,5 +1,7 @@
 #include "Harness.h"
 
+#include "hearth/vulkan/Native.h"
+
 #include <cstring>
 #include <vector>
 
@@ -70,6 +72,18 @@ void RunResourceTests() {
         // A sub-rectangle upload must stay inside the image.
         std::vector<u8> corner(2 * 2 * 4, 0xFF);
         texture->UploadRegion(corner.data(), 0, 0, 2, 2);
+
+        // The layout a caller reads back is the one hearth tracks, and setting it after a raw
+        // transition is what hearth starts from next. Moved back so the texture stays usable.
+        VkImageLayout uploaded = vk::ImageLayout(*texture);
+        CHECK(uploaded != VK_IMAGE_LAYOUT_UNDEFINED);
+        vk::ImmediateSubmit(gpu, [&](VkCommandBuffer cmd) {
+            vk::TransitionImage(cmd, vk::RawImage(*texture), uploaded, VK_IMAGE_LAYOUT_GENERAL);
+        });
+        vk::SetImageLayout(*texture, VK_IMAGE_LAYOUT_GENERAL);
+        CHECK(vk::ImageLayout(*texture) == VK_IMAGE_LAYOUT_GENERAL);
+        texture->UploadRegion(corner.data(), 2, 2, 2, 2);  // from the layout it was told
+        CHECK(vk::ImageLayout(*texture) == uploaded);
     }
 
     {

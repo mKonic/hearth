@@ -51,6 +51,11 @@ namespace hearth::vk {
     VkPipelineLayout RawLayout(Pipeline& pipeline);
     VkDescriptorSet Raw(BindGroup& group);
 
+    // The layout hearth believes a texture is in. Transition it yourself, then tell hearth where
+    // you left it, and its next pass starts from the right place.
+    VkImageLayout ImageLayout(Texture& texture);
+    void          SetImageLayout(Texture& texture, VkImageLayout layout);
+
     // A layout transition with conservative stage/access masks. Coarser than a hand-tuned
     // barrier and correct everywhere; three separate copies of exactly this function are what
     // started this library.
