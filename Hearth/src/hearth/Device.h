@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace hearth {
@@ -78,6 +79,14 @@ namespace hearth {
         // instance happily without them.
         bool validationActive = false;
 
+        // Which of DeviceDesc::optionalDeviceExtensions the device has, and so were enabled.
+        std::vector<std::string> enabledOptionalExtensions;
+        bool HasExtension(std::string_view name) const {
+            for (const auto& e : enabledOptionalExtensions)
+                if (e == name) return true;
+            return false;
+        }
+
         // `Caps().AtLeast(1, 4)` reads better at a call site than a packed comparison.
         bool AtLeast(u32 major, u32 minor) const {
             return apiVersion >= ((major << 22) | (minor << 12));
@@ -132,6 +141,12 @@ namespace hearth {
         // Refuse devices without descriptor indexing (DeviceCaps::descriptorIndexing) instead
         // of running without it. For a renderer whose shaders index texture arrays.
         bool requireDescriptorIndexing = false;
+
+        // Device extensions your own Vulkan code (through hearth/vulkan/Native.h) wants, enabled
+        // when the device has them; DeviceCaps::HasExtension says which it got. For the feature
+        // hearth does not wrap yet -- exporting memory as a dmabuf, say -- without a hearth
+        // change first.
+        std::vector<const char*> optionalDeviceExtensions;
 
         // Where to keep the pipeline cache between runs. Empty means in-memory only, which
         // still helps a process that builds several similar pipelines but starts cold every

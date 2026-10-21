@@ -295,6 +295,9 @@ namespace hearth {
             return Fail(DeviceErrorCode::DeviceFailed,
                         "dynamic rendering was enabled but its entry points did not resolve");
 
+        for (const char* ext : desc.optionalDeviceExtensions)
+            if (chosen.enable_extension_if_present(ext)) m_Caps.enabledOptionalExtensions.emplace_back(ext);
+
         // ---- optional features ---------------------------------------------------------------
         // Every one of these is required of a Vulkan 1.3 device, so on one this narrows nothing.
         // They are enabled because a shader that declares the matching SPIR-V capability --

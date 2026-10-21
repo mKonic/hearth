@@ -72,6 +72,20 @@ void RunDeviceTests() {
         }
     }
 
+    {
+        // Optional device extensions: one every device has is enabled and reported, a made-up
+        // one is skipped without failing the device.
+        DeviceDesc desc;
+        desc.enableValidation = false;
+        desc.optionalDeviceExtensions = {VK_KHR_MAINTENANCE1_EXTENSION_NAME, "VK_HEARTH_no_such_extension"};
+        auto device = CreateDevice(desc);
+        CHECK(device != nullptr);
+        if (device) {
+            CHECK(device->Caps().HasExtension(VK_KHR_MAINTENANCE1_EXTENSION_NAME) || caps.AtLeast(1, 1));
+            CHECK(!device->Caps().HasExtension("VK_HEARTH_no_such_extension"));
+        }
+    }
+
     // Format tables have to agree with themselves in both directions.
     CHECK(FormatSize(Format::RGBA8_UNORM) == 4);
     CHECK(FormatSize(Format::R8_UNORM) == 1);
