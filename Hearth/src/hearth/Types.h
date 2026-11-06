@@ -54,7 +54,18 @@ namespace hearth {
     // with, since compositing a faded layer with straight alpha double-darkens its edges.
     // Additive is the glow path: a sprite batcher can interleave it with alpha quads freely
     // because 2D draw order is submission order.
-    enum class BlendMode : u8 { None, AlphaStraight, AlphaPremultiplied, Additive };
+    // Custom takes PipelineDesc::blendFactors (compositing modes a preset does not cover, such
+    // as DstIn for masking or Multiply).
+    enum class BlendMode : u8 { None, AlphaStraight, AlphaPremultiplied, Additive, Custom };
+    enum class BlendFactor : u8 { Zero, One, SrcColor, OneMinusSrcColor, DstColor, OneMinusDstColor,
+                                  SrcAlpha, OneMinusSrcAlpha, DstAlpha, OneMinusDstAlpha };
+    enum class BlendOp : u8 { Add, Subtract, ReverseSubtract, Min, Max };
+    struct BlendFactors {
+        BlendFactor srcColor = BlendFactor::One, dstColor = BlendFactor::OneMinusSrcAlpha;
+        BlendOp colorOp = BlendOp::Add;
+        BlendFactor srcAlpha = BlendFactor::One, dstAlpha = BlendFactor::OneMinusSrcAlpha;
+        BlendOp alphaOp = BlendOp::Add;
+    };
 
     enum class LoadOp : u8 { Load, Clear, DontCare };
 

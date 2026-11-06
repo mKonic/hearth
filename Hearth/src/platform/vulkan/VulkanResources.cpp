@@ -513,7 +513,7 @@ namespace hearth {
         // targets blends them the same way, and per-attachment blending is a knob nothing
         // here has needed.
         const std::vector<VkPipelineColorBlendAttachmentState> blends(
-            std::max<size_t>(desc.colorFormats.size(), 1), BlendState(desc.blend));
+            std::max<size_t>(desc.colorFormats.size(), 1), BlendState(desc.blend, desc.blendFactors));
         VkPipelineColorBlendStateCreateInfo blendState{
             VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
         blendState.attachmentCount = static_cast<u32>(blends.size());

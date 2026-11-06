@@ -89,6 +89,7 @@ namespace hearth {
         u32 pushConstantSize = 0;
         PrimitiveTopology topology = PrimitiveTopology::TriangleList;
         BlendMode blend = BlendMode::AlphaStraight;
+        BlendFactors blendFactors;   // used when blend is Custom
         bool depthTest = false;
         bool depthWrite = false;
         CompareOp depthCompare = CompareOp::LessOrEqual;

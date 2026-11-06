@@ -35,7 +35,7 @@ namespace hearth {
     VkFrontFace           ToVk(FrontFace f);
     VkCompareOp           ToVk(CompareOp op);
 
-    VkPipelineColorBlendAttachmentState BlendState(BlendMode mode);
+    VkPipelineColorBlendAttachmentState BlendState(BlendMode mode, const BlendFactors& factors = {});
 
     void TransitionImageRaw(VkCommandBuffer cmd, VkImage image,
                             VkImageLayout from, VkImageLayout to,

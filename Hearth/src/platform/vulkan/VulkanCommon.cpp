@@ -129,7 +129,35 @@ namespace hearth {
         return t == IndexType::U16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
     }
 
-    VkPipelineColorBlendAttachmentState BlendState(BlendMode mode) {
+    namespace {
+        VkBlendFactor ToVk(BlendFactor f) {
+            switch (f) {
+                case BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
+                case BlendFactor::One: return VK_BLEND_FACTOR_ONE;
+                case BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
+                case BlendFactor::OneMinusSrcColor: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+                case BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
+                case BlendFactor::OneMinusDstColor: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+                case BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
+                case BlendFactor::OneMinusSrcAlpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                case BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
+                case BlendFactor::OneMinusDstAlpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+            }
+            return VK_BLEND_FACTOR_ONE;
+        }
+        VkBlendOp ToVk(BlendOp o) {
+            switch (o) {
+                case BlendOp::Add: return VK_BLEND_OP_ADD;
+                case BlendOp::Subtract: return VK_BLEND_OP_SUBTRACT;
+                case BlendOp::ReverseSubtract: return VK_BLEND_OP_REVERSE_SUBTRACT;
+                case BlendOp::Min: return VK_BLEND_OP_MIN;
+                case BlendOp::Max: return VK_BLEND_OP_MAX;
+            }
+            return VK_BLEND_OP_ADD;
+        }
+    }
+
+    VkPipelineColorBlendAttachmentState BlendState(BlendMode mode, const BlendFactors& factors) {
         VkPipelineColorBlendAttachmentState s{};
         s.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
                          | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -166,6 +194,15 @@ namespace hearth {
                 s.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
                 s.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
                 s.alphaBlendOp        = VK_BLEND_OP_ADD;
+                break;
+            case BlendMode::Custom:
+                s.blendEnable = VK_TRUE;
+                s.srcColorBlendFactor = ToVk(factors.srcColor);
+                s.dstColorBlendFactor = ToVk(factors.dstColor);
+                s.colorBlendOp        = ToVk(factors.colorOp);
+                s.srcAlphaBlendFactor = ToVk(factors.srcAlpha);
+                s.dstAlphaBlendFactor = ToVk(factors.dstAlpha);
+                s.alphaBlendOp        = ToVk(factors.alphaOp);
                 break;
         }
         return s;
