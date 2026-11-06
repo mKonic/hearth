@@ -985,7 +985,9 @@ namespace hearth {
                 ReportDeviceLost("vkQueuePresentKHR");
             } else if (presented == VK_ERROR_SURFACE_LOST_KHR) {
                 m_SurfaceGone = true;
-            } else if (presented != VK_SUCCESS) {
+            } else if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
+                // SUBOPTIMAL with an unchanged size is the rotated-display case above: expected
+                // on every frame, so it is not an error.
                 HEARTH_ERROR("vkQueuePresentKHR: {}", VkResultName(presented));
             }
         }
